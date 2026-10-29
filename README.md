@@ -20,7 +20,7 @@ This project brings a fully functional Transmog system to AzerothCore servers, c
 
 1. Replace the server script and the client AddOn with the new versions. **Both must be updated** — 2.6.0 changes messages between client and server.
 2. Run `sql/updates/2.6.0_auth.sql` against your auth database and `sql/updates/2.6.0_char.sql` against your characters database (once).
-3. Optional: transmogs that were wrongly saved as hidden by earlier versions can be reset with `UPDATE character_transmog SET item = NULL WHERE item = 0;` (this also un-hides slots players hid on purpose).
+3. Optional: run `sql/updates/2.6.0_char_optional_unhide.sql` against your characters database to fix slots that earlier versions wrongly saved as hidden (items equipped there later appear invisible). Hides that players chose themselves are kept.
 
 ## ⚙️ Configuration
 
