@@ -75,6 +75,16 @@
       local BLOCKED_TRANSMOG_QUALITIES = {}                               --║
 -- ╟────────────────────────────────────────────────────────────────────────╢
 -- ║                                                                        ║
+-- ║ Versions before 2.6.0 saved empty slots as hidden during loading       ║
+-- ║ screens, which makes items equipped there later invisible. When        ║
+-- ║ enabled, those entries are cleared at server startup. Hides players    ║
+-- ║ chose themselves are kept.                                             ║
+-- ║                                                                        ║
+-- ║ It is recommended to leave this option enabled.                        ║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+      local FIX_SLOTS_WRONGLY_SAVED_AS_HIDDEN = true                      --║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+-- ║                                                                        ║
 -- ║ Weapon glows (enchant visuals) players can choose for main-hand and    ║
 -- ║ off-hand weapons, free for everyone. Each entry is an enchant ID from  ║
 -- ║ SpellItemEnchantment.dbc and the name shown in the menu. Test new IDs  ║
@@ -105,18 +115,75 @@
 local AIO = AIO or require("AIO")
 local TransmogrificationHandler = AIO.AddHandlers("TransmogrificationServer", {})
 
--- Bring the characters database up to date if the update scripts in sql/updates were not run, so a
--- missing table or column can't break transmogs for everyone.
-CharDBQuery([[CREATE TABLE IF NOT EXISTS `character_transmog_outfits` (
+-- Creates and upgrades the transmog tables at startup, so the files in sql/ never need to be imported by
+-- hand. Every step checks first, so this is safe to run on every restart and against any older version.
+local function HasIndex(query, tableName, keyName)
+	return query("SHOW INDEX FROM `" .. tableName .. "` WHERE Key_name = '" .. keyName .. "';") ~= nil
+end
+
+local function SetUpDatabase()
+	-- Auth database: the account-wide appearance collection.
+	AuthDBQuery([[CREATE TABLE IF NOT EXISTS `account_transmog` (
+  `account_id` int unsigned NOT NULL,
+  `unlocked_item_id` int unsigned NOT NULL,
+  `inventory_type` int unsigned DEFAULT NULL,
+  `inventory_subtype` int unsigned DEFAULT NULL,
+  `display_id` int unsigned NOT NULL,
+  `item_name` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  UNIQUE KEY `account_item_id` (`account_id`,`unlocked_item_id`) USING BTREE,
+  UNIQUE KEY `account_display_id` (`account_id`,`display_id`),
+  KEY `account_inventory_type` (`account_id`,`inventory_type`,`inventory_subtype`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;]])
+	if not HasIndex(AuthDBQuery, "account_transmog", "account_inventory_type") then
+		AuthDBQuery("ALTER TABLE `account_transmog` ADD KEY `account_inventory_type` (`account_id`,`inventory_type`,`inventory_subtype`);")
+		print("[Eluna] Transmog System: added the appearance list index to account_transmog.")
+	end
+	
+	-- Characters database: transmogs per slot.
+	CharDBQuery([[CREATE TABLE IF NOT EXISTS `character_transmog` (
+  `player_guid` int unsigned NOT NULL,
+  `slot` varchar(3) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `item` int unsigned DEFAULT NULL,
+  `real_item` int unsigned DEFAULT NULL,
+  `enchant` int unsigned DEFAULT NULL,
+  PRIMARY KEY (`player_guid`,`slot`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;]])
+	
+	-- 2.6.0: replace the duplicate (player_guid, slot) indexes from older installs with a primary key.
+	if not HasIndex(CharDBQuery, "character_transmog", "PRIMARY") then
+		CharDBQuery("DELETE FROM `character_transmog` WHERE `player_guid` IS NULL;")
+		local changes = { "MODIFY `player_guid` int unsigned NOT NULL" }
+		for _, keyName in ipairs({ "player_and_slot", "player_and_slot_key" }) do
+			if HasIndex(CharDBQuery, "character_transmog", keyName) then
+				table.insert(changes, "DROP KEY `" .. keyName .. "`")
+			end
+		end
+		table.insert(changes, "ADD PRIMARY KEY (`player_guid`,`slot`)")
+		CharDBQuery("ALTER TABLE `character_transmog` " .. table.concat(changes, ", ") .. ";")
+		print("[Eluna] Transmog System: added a primary key to character_transmog.")
+	end
+	
+	-- 2.8.0: chosen weapon glow per weapon slot.
+	if not CharDBQuery("SHOW COLUMNS FROM `character_transmog` LIKE 'enchant';") then
+		CharDBQuery("ALTER TABLE `character_transmog` ADD COLUMN `enchant` int unsigned DEFAULT NULL;")
+		print("[Eluna] Transmog System: added the `enchant` column to character_transmog.")
+	end
+	
+	-- 2.7.0: saved outfits.
+	CharDBQuery([[CREATE TABLE IF NOT EXISTS `character_transmog_outfits` (
   `player_guid` int unsigned NOT NULL,
   `name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `items` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   PRIMARY KEY (`player_guid`,`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;]])
-if not CharDBQuery("SHOW COLUMNS FROM `character_transmog` LIKE 'enchant';") then
-	CharDBQuery("ALTER TABLE `character_transmog` ADD COLUMN `enchant` int unsigned DEFAULT NULL;")
-	print("[Eluna] Transmog System: added the `enchant` column to character_transmog.")
+	
+	-- Slots hidden by mistake before 2.6.0 never had an item recorded; real hides since 2.6.0 always do.
+	if FIX_SLOTS_WRONGLY_SAVED_AS_HIDDEN then
+		CharDBQuery("UPDATE `character_transmog` SET `item` = NULL WHERE `item` = 0 AND (`real_item` IS NULL OR `real_item` = 0);")
+	end
 end
+
+SetUpDatabase()
 
 -- Per-player limits on how often each client request is handled: at most `count` calls per `window` ms.
 -- EquipTransmogItem is sent once per changed slot when pressing Apply, so it allows bursts.

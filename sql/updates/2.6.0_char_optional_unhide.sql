@@ -1,3 +1,4 @@
+-- Not required: the server script applies this automatically at startup. Kept for reference.
 -- OPTIONAL. Run once against the characters database (e.g. acore_characters) after upgrading from 2.5.x.
 -- Versions before 2.6.0 saved slots that were empty during a loading screen as "hidden" (item = 0),
 -- which makes items equipped there later invisible. This clears those entries, but only for slots

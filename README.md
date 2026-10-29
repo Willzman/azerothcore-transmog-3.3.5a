@@ -10,29 +10,19 @@ This project brings a fully functional Transmog system to AzerothCore servers, c
 
 1. Ensure you have both [AIO](https://github.com/Rochet2/AIO) and [mod-eluna](https://github.com/azerothcore/mod-eluna) installed on your AzerothCore server.
 2. Copy the contents of the `lua_scripts` folder into your Eluna/AIO Lua scripts directory.
-3. Import all `.sql` files located in the `sql` folder into your server database.
-4. Move the patch files into an `.mpq` archive of your choice (you can use [MPQEditor](https://www.zezula.net/en/mpq/download.html)).
-5. Start your server — and enjoy your new Transmog system!
+3. Move the patch files into an `.mpq` archive of your choice (you can use [MPQEditor](https://www.zezula.net/en/mpq/download.html)).
+4. Start your server — and enjoy your new Transmog system!
+
+The database tables are created (and upgraded from any older version) automatically when the server starts, so there is nothing to import. The files in `sql/` show the schema for reference and can still be run by hand if you prefer.
 
 📚 For more help, check out the [mod-eluna documentation](https://github.com/azerothcore/mod-eluna).
 
-### Upgrading from 2.7.x
+### Upgrading
 
 1. Replace the server script and the client AddOn with the new versions. **Both must be updated.**
-2. Optional: run `sql/updates/2.8.0_char.sql` against your characters database. The server script also adds the new column itself at startup if it is missing.
+2. Restart the server (or reload Eluna). Database changes are applied automatically; check the server log for `[Eluna] Transmog System` lines.
 
-### Upgrading from 2.6.x
-
-1. Replace the server script and the client AddOn with the new versions. **Both must be updated.**
-2. Run `sql/updates/2.7.0_char.sql` against your characters database (once). Outfits players saved with 2.6.x are moved to the server automatically the next time they log in.
-
-### Upgrading from 2.5.x
-
-Follow these steps, then the 2.6.x steps above.
-
-1. Replace the server script and the client AddOn with the new versions. **Both must be updated** — 2.6.0 changes messages between client and server.
-2. Run `sql/updates/2.6.0_auth.sql` against your auth database and `sql/updates/2.6.0_char.sql` against your characters database (once).
-3. Optional: run `sql/updates/2.6.0_char_optional_unhide.sql` against your characters database to fix slots that earlier versions wrongly saved as hidden (items equipped there later appear invisible). Hides that players chose themselves are kept.
+Outfits players saved on the client with 2.6.x are moved to the server the next time they log in. Slots that versions before 2.6.0 wrongly saved as hidden are fixed at startup (turn this off with `FIX_SLOTS_WRONGLY_SAVED_AS_HIDDEN`).
 
 ## ⚙️ Configuration
 
@@ -59,6 +49,11 @@ All options are at the top of `lua_scripts/Transmogrification/transmogrification
 - Saved outfits: use the **Outfits** button in the Transmogrify window to save the current preview, load it back later, or delete it. Outfits are stored per character on the server (up to 20), so they follow the character to any PC.
 
 ## 📝 Changelog
+
+### 2.8.1
+
+- Database tables are created and upgraded automatically at server startup; the SQL files no longer need to be imported.
+- Slots wrongly saved as hidden by versions before 2.6.0 are fixed automatically (`FIX_SLOTS_WRONGLY_SAVED_AS_HIDDEN`).
 
 ### 2.8.0
 

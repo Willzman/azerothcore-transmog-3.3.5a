@@ -1,3 +1,4 @@
+-- Not required: the server script applies this automatically at startup. Kept for reference.
 -- Upgrade an existing 2.5.x install. Run once against the characters database (e.g. acore_characters).
 -- Replaces the duplicate (player_guid, slot) indexes with a primary key.
 DELETE FROM `character_transmog` WHERE `player_guid` IS NULL;
