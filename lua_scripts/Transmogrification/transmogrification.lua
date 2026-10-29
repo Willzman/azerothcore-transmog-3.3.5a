@@ -60,14 +60,6 @@
       local RESTRICT_WEAPON_TRANSMOG_TO_SIMILAR_WEAPONS = true            --║
 -- ╟────────────────────────────────────────────────────────────────────────╢
 -- ║                                                                        ║
--- ║ Cost in copper to apply a transmog appearance to one slot. Hiding and  ║
--- ║ restoring appearances is always free. 10000 copper = 1 gold.           ║
--- ║                                                                        ║
--- ║ Set to 0 to make transmogrification free.                              ║
--- ╟────────────────────────────────────────────────────────────────────────╢
-      local TRANSMOG_COST_COPPER = 0                                      --║
--- ╟────────────────────────────────────────────────────────────────────────╢
--- ║                                                                        ║
 -- ║ Item IDs that can never be collected or used as a transmog appearance, ║
 -- ║ e.g. GM or test items. Example: { [19019] = true, [17182] = true }     ║
 -- ╟────────────────────────────────────────────────────────────────────────╢
@@ -148,10 +140,6 @@ local localeMessages = {
 	LOOT_ITEM_LOCALE = {
 		[0] = " has been added to your appearance collection.", -- enUS/enGB
 		[3] = " wurde deiner Transmog-Sammlung hinzugefügt.", -- deDE
-	},
-	NOT_ENOUGH_MONEY = {
-		[0] = "You do not have enough money to transmogrify this item.", -- enUS/enGB
-		[3] = "Du hast nicht genug Geld, um diesen Gegenstand zu transmogrifizieren.", -- deDE
 	}
 }
 
@@ -522,7 +510,6 @@ end
 
 function TransmogrificationHandler.LoadPlayer(player)
 	Transmog_Load(player)
-	AIO.Handle(player, "TransmogrificationServer", "SetTransmogCost", TRANSMOG_COST_COPPER)
 	player:SetUInt32Value(147, 1) -- use unit padding
 end
 
@@ -551,16 +538,6 @@ function TransmogrificationHandler.EquipTransmogItem(player, item, slot)
 		if not item or not CanApplyTransmog(player, slot, equippedItem, item) then
 			SendSlotTransmog(player, slot)
 			return
-		end
-		
-		-- Applying an appearance costs money; hiding and restoring are free.
-		if TRANSMOG_COST_COPPER > 0 then
-			if player:GetCoinage() < TRANSMOG_COST_COPPER then
-				player:SendBroadcastMessage(GetLocalizedMessage("NOT_ENOUGH_MONEY", player:GetDbLocaleIndex()))
-				SendSlotTransmog(player, slot)
-				return
-			end
-			player:ModifyMoney(-TRANSMOG_COST_COPPER)
 		end
 	end
 	

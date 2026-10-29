@@ -22,7 +22,7 @@ files["patches/**/*.lua"] = {
 		"ACCEPT", "AIO", "ApplyCharacterTransmogTabPosition", "CANCEL", "CharacterAmmoSlot",
 		"CharacterFrame", "ChatEdit_SendText", "ChatFrame1EditBox", "ChatFrame_AddMessageEventFilter",
 		"CreateFrame", "CursorUpdate", "DEFAULT_CHAT_FRAME", "DressUpTexturePath", "EasyMenu",
-		"GameTooltip", "GetCoinTextureString", "GetCursorPosition", "GetInventoryItemID",
+		"GameTooltip", "GetCursorPosition", "GetInventoryItemID",
 		"GetInventoryItemTexture", "GetInventorySlotInfo", "GetItemIcon", "GetItemInfo",
 		"GetTransmogrificationOptions", "InterfaceOptionsFrame_OpenToCategory", "IsEquippableItem",
 		"IsShiftKeyDown", "ItemSearchInput", "LeftButton", "LibStub", "OKAY", "PaperDollFrame",

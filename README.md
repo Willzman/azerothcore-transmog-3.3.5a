@@ -28,7 +28,6 @@ All options are at the top of `lua_scripts/Transmogrification/transmogrification
 
 - Which items are added to the collection (equipped, looted, quest rewards).
 - Armor material and weapon type restrictions.
-- `TRANSMOG_COST_COPPER` — cost to apply an appearance to one slot (hiding and restoring are free).
 - `BLOCKED_TRANSMOG_ITEMS` / `BLOCKED_TRANSMOG_QUALITIES` — items or qualities that can never be used as appearances.
 
 ## 📥 Installation (Client)
@@ -44,6 +43,10 @@ All options are at the top of `lua_scripts/Transmogrification/transmogrification
 
 ## 📝 Changelog
 
+### 2.6.2
+
+- Removed the transmog cost option. Transmogrification is always free.
+
 ### 2.6.1
 
 - The Transmogrify button on the Character window can now be moved (Shift-drag), so it no longer clashes with UI addons.
@@ -54,7 +57,7 @@ All options are at the top of `lua_scripts/Transmogrification/transmogrification
 - Fixed transmogs reverting to the original or an old appearance after teleports and UI reloads.
 - Fixed armor material restrictions for legs, feet and wrists, and off-hand shields/holdables being offered weapon appearances.
 - Transmogs carry over when swapping gear if the appearance is still valid for the new item.
-- Added transmog cost, item/quality blocklists, saved outfits and automatic collection sync.
+- Added item/quality blocklists, saved outfits and automatic collection sync.
 - Faster appearance lists and collection sync (new database indexes, fewer queries).
 
 ## 🚧 Work in Progress (WIP)

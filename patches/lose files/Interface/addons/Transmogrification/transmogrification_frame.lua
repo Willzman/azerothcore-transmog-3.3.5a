@@ -107,7 +107,6 @@ local isTooltipHooked = false
 local CurrentItemSlot = PLAYER_VISIBLE_ITEM_1_ENTRYID
 local currentPage = 1
 local currentSlotTooltip = nil
-local transmogCost = 0
 local hasSyncedCollection = false
 -- Transmogrification state is always synced from the server on PLAYER_ENTERING_WORLD, never restored from SavedVariables.
 originalTransmogrificationIDs = {}
@@ -317,11 +316,6 @@ function TransmogrificationHandler.SetTransmogItemIDClient(player, slot, id, rea
 
 	-- Update all equipment icons.
 	UpdateAllSlotTextures()
-end
-
--- Receives the server's cost (in copper) to apply an appearance to one slot.
-function TransmogrificationHandler.SetTransmogCost(player, cost)
-	transmogCost = tonumber(cost) or 0
 end
 
 -- CollectedAppearances is saved as a list; this set mirrors it for fast tooltip lookups.
@@ -632,26 +626,19 @@ end
 function TransmogrificationToolTip(btn)
 	GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
 
-	-- Determine if there are transmogrification appearance changes to apply, and how many of them cost money.
+	-- Determine if there are transmogrification appearance changes to apply.
 	local hasChanges = false
-	local paidChanges = 0
 	for slotName, slotID in pairs(equipmentSlotIDs) do
-		local transmogID = previewTransmogrificationIDs[slotName]
 		local equipSlot = GetEquipmentSlot(slotID)
 		local hasItem = equipSlot and GetInventoryItemID("player", equipSlot) ~= nil
-		if hasItem and transmogID ~= currentTransmogrificationIDs[slotName] then
+		if hasItem and previewTransmogrificationIDs[slotName] ~= currentTransmogrificationIDs[slotName] then
 			hasChanges = true
-			if transmogID ~= nil and transmogID ~= 0 then
-				paidChanges = paidChanges + 1
-			end
+			break
 		end
 	end
 
 	if hasChanges then
 		GameTooltip:AddLine("|cffffffff" .. L["Transmogrify"])
-		if transmogCost > 0 and paidChanges > 0 then
-			GameTooltip:AddLine("|cffffd200" .. string.format(L["Cost: %s"], GetCoinTextureString(transmogCost * paidChanges)))
-		end
 	else
 		GameTooltip:AddLine("|cffffffff" .. L["Transmogrify"])
 		GameTooltip:AddLine("|cff808080" .. L["No appearances to apply."])

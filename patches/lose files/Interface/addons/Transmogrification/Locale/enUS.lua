@@ -11,7 +11,6 @@ L["Show Helm"] = true
 L["Shift-drag to move."] = true
 L["Reset Character Window Button"] = true
 L["Moves the Transmogrify button on the Character window back to its default position. Shift-drag the button to move it."] = true
-L["Cost: %s"] = true
 L["Outfits"] = true
 L["No saved outfits"] = true
 L["Save current preview..."] = true
