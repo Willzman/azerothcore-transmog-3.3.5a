@@ -20,20 +20,20 @@ files["lua_scripts/**/*.lua"] = {
 files["patches/**/*.lua"] = {
 	read_globals = {
 		"ACCEPT", "AIO", "ApplyCharacterTransmogTabPosition", "CANCEL", "CharacterAmmoSlot",
-		"CharacterFrame", "ChatEdit_SendText", "ChatFrame1EditBox", "ChatFrame_AddMessageEventFilter",
-		"CreateFrame", "CursorUpdate", "DEFAULT_CHAT_FRAME", "DressUpTexturePath", "EasyMenu",
-		"GameTooltip", "GetCursorPosition", "GetInventoryItemID",
-		"GetInventoryItemTexture", "GetInventorySlotInfo", "GetItemIcon", "GetItemInfo",
-		"GetTransmogrificationOptions", "InterfaceOptionsFrame_OpenToCategory", "IsEquippableItem",
-		"IsShiftKeyDown", "ItemSearchInput", "LeftButton", "LibStub", "OKAY", "PaperDollFrame",
-		"PaperDollFrame_SetLevel", "PaperDollFrame_SetResistances", "PaperDollFrame_UpdateStats",
-		"PlaySound", "PlayerTitleFrame_UpdateTitles", "PlayerTitlePickerScrollFrame", "ReloadUI",
+		"CharacterFrame", "ChatFrame_AddMessageEventFilter", "CreateFrame", "CursorUpdate",
+		"DEFAULT_CHAT_FRAME", "DressUpTexturePath", "EasyMenu", "GameTooltip", "GetCursorPosition",
+		"GetInventoryItemID", "GetInventoryItemTexture", "GetInventorySlotInfo", "GetItemIcon",
+		"GetItemInfo", "GetTransmogrificationOptions", "HandleModifiedItemClick",
+		"InterfaceOptionsFrame_OpenToCategory", "IsEquippableItem", "IsModifiedClick", "IsShiftKeyDown",
+		"ItemSearchInput", "LeftButton", "LibStub", "OKAY", "PaperDollFrame", "PaperDollFrame_SetLevel",
+		"PaperDollFrame_SetResistances", "PaperDollFrame_UpdateStats", "PlaySound",
+		"PlayerTitleFrame_UpdateTitles", "PlayerTitlePickerScrollFrame", "ReloadUI",
 		"ResetCharacterTransmogTabPosition", "RightButton", "SaveButton", "SetItemButtonTexture",
 		"ShowCloak", "ShowCloakCheckBox", "ShowCloakText", "ShowHelm", "ShowHelmCheckBox", "ShowHelmText",
 		"ShowingCloak", "ShowingHelm", "StaticPopupDialogs", "StaticPopup_Show", "Subtitle", "Title",
-		"TransmogCloseButton", "TransmogMouseCapture", "TransmogPaginationText", "TransmogWarningFrame",
-		"TransmogWarningText", "Transmogrification", "TransmogrificationFrame",
-		"TransmogrificationModelFrame", "UIParent", "UISpecialFrames", "UnitHasRelicSlot", "UnitRace",
-		"UnitSex", "strfind", "strsub", "strtrim", "tinsert", "wipe"
+		"TransmogAppearanceCountText", "TransmogCloseButton", "TransmogMouseCapture",
+		"TransmogPaginationText", "TransmogWarningFrame", "TransmogWarningText", "Transmogrification",
+		"TransmogrificationFrame", "TransmogrificationModelFrame", "UIParent", "UISpecialFrames",
+		"UnitHasRelicSlot", "UnitRace", "UnitSex", "strfind", "strsub", "strtrim", "tinsert", "wipe"
 	},
 }

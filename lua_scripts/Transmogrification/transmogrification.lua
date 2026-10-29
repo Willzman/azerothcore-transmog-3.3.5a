@@ -87,7 +87,11 @@ local REQUEST_LIMITS = {
 	SetCurrentSlotItemIDs = { count = 10, window = 1000 },
 	SetSearchCurrentSlotItemIDs = { count = 10, window = 1000 },
 	GetItemsWithSameAppearance = { count = 20, window = 1000 },
-	SendCollectedTransmogItemIDs = { count = 1, window = 10000 },
+	SendCollectedTransmogItemIDs = { count = 2, window = 10000 },
+	RequestOutfits = { count = 5, window = 1000 },
+	SaveOutfit = { count = 5, window = 1000 },
+	DeleteOutfit = { count = 5, window = 1000 },
+	ImportOutfits = { count = 1, window = 10000 },
 }
 local requestCounts = {}
 
@@ -140,6 +144,10 @@ local localeMessages = {
 	LOOT_ITEM_LOCALE = {
 		[0] = " has been added to your appearance collection.", -- enUS/enGB
 		[3] = " wurde deiner Transmog-Sammlung hinzugefügt.", -- deDE
+	},
+	TOO_MANY_OUTFITS = {
+		[0] = "You can save up to %d outfits. Delete one to save a new outfit.", -- enUS/enGB
+		[3] = "Du kannst bis zu %d Outfits speichern. Lösche eines, um ein neues zu speichern.", -- deDE
 	}
 }
 
@@ -183,6 +191,7 @@ end
 
 function Transmog_OnCharacterDelete(event, guid)
 	CharDBQuery("DELETE FROM character_transmog WHERE player_guid = " .. guid .. "")
+	CharDBQuery("DELETE FROM character_transmog_outfits WHERE player_guid = " .. guid .. "")
 end
 
 function Transmog_OnCharacterLogin(event, player)
@@ -191,6 +200,8 @@ function Transmog_OnCharacterLogin(event, player)
 	local playerExists = playerExistsQuery:GetUInt32(0) > 0
 	if not playerExists then
 		Transmog_OnCharacterCreate(event, player)
+	else
+		Transmog_ValidateStoredTransmogs(player)
 	end
 end
 
@@ -446,6 +457,26 @@ function CanApplyTransmog(player, slot, equippedItem, itemID)
 	return result ~= nil
 end
 
+-- Clears stored transmogs that are no longer valid for the equipped item: ones saved by versions
+-- before 2.6.0 without ownership checks, or ones that break restriction settings changed since.
+function Transmog_ValidateStoredTransmogs(player)
+	local playerGUID = player:GetGUIDLow()
+	local transmogs = CharDBQuery("SELECT slot, item FROM character_transmog WHERE player_guid = "..playerGUID.." AND item > 0;")
+	if not transmogs then
+		return
+	end
+
+	for i = 1, transmogs:GetRowCount() do
+		local row = transmogs:GetRow()
+		local slot = ToTransmogSlot(row["slot"])
+		local equippedItem = slot and player:GetEquippedItemBySlot(GetEquipmentSlot(slot))
+		if equippedItem and not CanApplyTransmog(player, slot, equippedItem, row["item"]) then
+			CharDBQuery("UPDATE character_transmog SET item = NULL WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
+		end
+		transmogs:NextRow()
+	end
+end
+
 local function RefreshEquippedTransmogs(player)
 	local playerGUID = player:GetGUIDLow()
 	
@@ -579,7 +610,24 @@ local function SendSlotItemIDs(player, slot, page, search)
 	local queryConditions = GetTransmogQueryConditions(player:GetAccountId(), slot, equippedItem)
 	
 	if search then
-		queryConditions = queryConditions .. " AND (display_id LIKE '%" .. search .. "%' OR item_name LIKE '%" .. search .. "%')"
+		local searchConditions = "display_id LIKE '%" .. search .. "%' OR item_name LIKE '%" .. search .. "%'"
+		
+		-- Each look is stored under the first item collected with it, so also match looks shared with any
+		-- other item whose name or item ID matches the search.
+		local searchItemID = ToPositiveInteger(search)
+		local displayQuery = "SELECT DISTINCT displayid FROM item_template WHERE InventoryType " .. INVENTORY_TYPES_BY_SLOT[slot]
+			.. " AND (name LIKE '%" .. search .. "%'" .. (searchItemID and (" OR entry = " .. searchItemID) or "") .. ") LIMIT 500;"
+		local displayResult = WorldDBQuery(displayQuery)
+		if displayResult then
+			local displayIDs = {}
+			for i = 1, displayResult:GetRowCount() do
+				table.insert(displayIDs, displayResult:GetRow()["displayid"])
+				displayResult:NextRow()
+			end
+			searchConditions = searchConditions .. " OR display_id IN (" .. table.concat(displayIDs, ", ") .. ")"
+		end
+		
+		queryConditions = queryConditions .. " AND (" .. searchConditions .. ")"
 	end
 	
 	-- Calculate page offset for pagination
@@ -592,7 +640,7 @@ local function SendSlotItemIDs(player, slot, page, search)
 	)
 	local countResult = AuthDBQuery(countQuery)
 	if not countResult then
-		AIO.Handle(player, "TransmogrificationServer", "InitTab", {}, page, false)
+		AIO.Handle(player, "TransmogrificationServer", "InitTab", {}, page, false, 0)
 		return
 	end
 	
@@ -607,7 +655,7 @@ local function SendSlotItemIDs(player, slot, page, search)
 	)
 	local transmogs = AuthDBQuery(transmogQuery)
 	if not transmogs then
-		AIO.Handle(player, "TransmogrificationServer", "InitTab", {}, page, false)
+		AIO.Handle(player, "TransmogrificationServer", "InitTab", {}, page, false, totalTransmogs)
 		return
 	end
 	
@@ -621,7 +669,7 @@ local function SendSlotItemIDs(player, slot, page, search)
 	end
 	
 	-- Return the result to the player
-	AIO.Handle(player, "TransmogrificationServer", "InitTab", currentSlotItemIDs, page, hasMorePages)
+	AIO.Handle(player, "TransmogrificationServer", "InitTab", currentSlotItemIDs, page, hasMorePages, totalTransmogs)
 end
 
 function TransmogrificationHandler.SetCurrentSlotItemIDs(player, slot, page)
@@ -720,6 +768,103 @@ function TransmogrificationHandler.SendCollectedTransmogItemIDs(player, silent)
 	
 	-- Send the collected transmogs to the client
 	AIO.Handle(player, "TransmogrificationServer", "ReceiveCollectedAppearances", collectedAppearances, uniqueAppearancesCount, silent)
+end
+
+-- Saved outfits: named sets of appearances per character, stored as "slot=item,..." (0 = hidden;
+-- slots left out show the equipped item). Loading one only fills the client's preview; applying it
+-- still goes through EquipTransmogItem and its checks.
+local MAX_OUTFITS = 20
+
+local function ToOutfitName(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	name = name:gsub("[%c'\"`\\%%;]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+	if name == "" or #name > 64 then
+		return nil
+	end
+	return name
+end
+
+local function SendOutfits(player)
+	local outfits = {}
+	local result = CharDBQuery("SELECT name, items FROM character_transmog_outfits WHERE player_guid = "..player:GetGUIDLow()..";")
+	if result then
+		for i = 1, result:GetRowCount() do
+			local row = result:GetRow()
+			local outfit = {}
+			for slot, item in string.gmatch(row["items"] or "", "(%d+)=(%d+)") do
+				outfit[tonumber(slot)] = tonumber(item)
+			end
+			outfits[row["name"]] = outfit
+			result:NextRow()
+		end
+	end
+	AIO.Handle(player, "TransmogrificationServer", "ReceiveOutfits", outfits)
+end
+
+-- Saves (or overwrites) one outfit. Returns false if the outfit limit is reached.
+local function StoreOutfit(player, name, outfit)
+	name = ToOutfitName(name)
+	if not name or type(outfit) ~= "table" then
+		return true
+	end
+	
+	local items = {}
+	for outfitSlot, outfitItem in pairs(outfit) do
+		local slot = ToTransmogSlot(outfitSlot)
+		local item = tonumber(outfitItem)
+		if slot and item and (item == 0 or ToPositiveInteger(item)) then
+			table.insert(items, string.format("%d=%d", slot, item))
+		end
+	end
+	table.sort(items)
+	
+	local playerGUID = player:GetGUIDLow()
+	local exists = CharDBQuery("SELECT 1 FROM character_transmog_outfits WHERE player_guid = "..playerGUID.." AND name = '"..name.."';")
+	if not exists then
+		local count = CharDBQuery("SELECT COUNT(*) FROM character_transmog_outfits WHERE player_guid = "..playerGUID..";")
+		if count and count:GetUInt32(0) >= MAX_OUTFITS then
+			return false
+		end
+	end
+	
+	CharDBQuery("REPLACE INTO character_transmog_outfits (`player_guid`, `name`, `items`) VALUES ("..playerGUID..", '"..name.."', '"..table.concat(items, ",").."');")
+	return true
+end
+
+function TransmogrificationHandler.RequestOutfits(player)
+	SendOutfits(player)
+end
+
+function TransmogrificationHandler.SaveOutfit(player, name, outfit)
+	if not StoreOutfit(player, name, outfit) then
+		player:SendBroadcastMessage(GetLocalizedMessage("TOO_MANY_OUTFITS", player:GetDbLocaleIndex(), MAX_OUTFITS))
+	end
+	SendOutfits(player)
+end
+
+-- Moves outfits saved on the client by 2.6.x onto the server, in one request.
+function TransmogrificationHandler.ImportOutfits(player, outfits)
+	if type(outfits) ~= "table" then
+		return
+	end
+	local imported = 0
+	for name, outfit in pairs(outfits) do
+		imported = imported + 1
+		if imported > MAX_OUTFITS or not StoreOutfit(player, name, outfit) then
+			break
+		end
+	end
+	SendOutfits(player)
+end
+
+function TransmogrificationHandler.DeleteOutfit(player, name)
+	name = ToOutfitName(name)
+	if name then
+		CharDBQuery("DELETE FROM character_transmog_outfits WHERE player_guid = "..player:GetGUIDLow().." AND name = '"..name.."';")
+	end
+	SendOutfits(player)
 end
 
 -- Apply the request limits to every limited handler.

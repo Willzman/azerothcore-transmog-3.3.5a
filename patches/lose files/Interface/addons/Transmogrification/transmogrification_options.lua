@@ -137,8 +137,7 @@ function GetTransmogrificationOptions()
 				type = "execute",
 				func = function()
 					DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. L["Querying the server for collected transmogrification appearances..."] .. "\n")
-					ChatFrame1EditBox:SetText(".transmog sync")
-					ChatEdit_SendText(ChatFrame1EditBox, 1)
+					AIO.Handle("TransmogrificationServer", "SendCollectedTransmogItemIDs", false)
 				end,
 			},
 		},

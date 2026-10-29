@@ -25,6 +25,14 @@ CREATE TABLE IF NOT EXISTS `character_transmog` (
 
 -- Daten-Export vom Benutzer nicht ausgewählt
 
+-- Saved transmog outfits, one row per outfit. `items` is "slot=item,..." (0 = hidden).
+CREATE TABLE IF NOT EXISTS `character_transmog_outfits` (
+  `player_guid` int unsigned NOT NULL,
+  `name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `items` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  PRIMARY KEY (`player_guid`,`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 /*!40103 SET TIME_ZONE=IFNULL(@OLD_TIME_ZONE, 'system') */;
 /*!40101 SET SQL_MODE=IFNULL(@OLD_SQL_MODE, '') */;
 /*!40014 SET FOREIGN_KEY_CHECKS=IFNULL(@OLD_FOREIGN_KEY_CHECKS, 1) */;

@@ -274,7 +274,20 @@ function TransmogrificationHandler.ClearSlotTransmogrification(player, slot)
 	end
 end
 
+-- Ctrl-click opens the appearance in the Dressing Room and Shift-click links it in chat, like item buttons elsewhere.
+local function HandleAppearanceModifiedClick(itemID)
+	if not IsModifiedClick() then
+		return false
+	end
+	local _, itemLink = GetItemInfo(itemID)
+	return itemLink ~= nil and HandleModifiedItemClick(itemLink)
+end
+
 function OnClickItemTransmogrificationButton(btn, buttonType)
+	if HandleAppearanceModifiedClick(btn:GetID()) then
+		return
+	end
+
 	PlaySound("igMainMenuOptionCheckBoxOn", "sfx")
 	local itemID = btn:GetID()
 	local textureName = GetItemIcon(itemID)
@@ -504,6 +517,7 @@ local function OnEnterItemToolTip(btn)
 	if hasItem then
 		GameTooltip:AddLine("\n|cff" .. L["00ff00"] .. L["Click to preview this item."])
 	end
+	GameTooltip:AddLine("|cff808080" .. L["Ctrl-click to try on, Shift-click to link."])
 	
 	GameTooltip:Show()
 end
@@ -733,6 +747,7 @@ local function OnEventEnterWorldReloadTransmogIDs(self, event, unit)
 		if not hasSyncedCollection then
 			hasSyncedCollection = true
 			AIO.Handle("TransmogrificationServer", "SendCollectedTransmogItemIDs", true)
+			AIO.Handle("TransmogrificationServer", "RequestOutfits")
 		end
 	elseif ( unit == "player" ) then
 		AIO.Handle("TransmogrificationServer", "OnUnequipItem")
@@ -905,13 +920,63 @@ function OnClickApplyAllowTransmogrifications(btn)
 	end
 end
 
--- Saved outfits: named sets of appearances stored per character. Loading an outfit only fills the preview;
--- the player still clicks Transmogrify to apply it, so the server validates and charges as usual.
+-- Saved outfits: named sets of appearances stored on the server per character. Loading an outfit only
+-- fills the preview; the player still clicks Transmogrify to apply it, so the server validates it as usual.
+-- Outfits are keyed by slot name here and by slot entry ID on the server.
+local outfits = {}
+local pendingSavedOutfit = nil
+local hasImportedLegacyOutfits = false
+
 local function GetOutfits()
-	if type(TransmogrificationOutfits) ~= "table" then
-		TransmogrificationOutfits = {}
+	return outfits
+end
+
+-- 2.6.x kept outfits in the TransmogrificationOutfits saved variable; move them to the server once.
+local function ImportLegacyOutfits()
+	if type(TransmogrificationOutfits) ~= "table" or next(TransmogrificationOutfits) == nil then
+		return
 	end
-	return TransmogrificationOutfits
+
+	-- Clear the local copy once the server has every legacy outfit.
+	local missing = {}
+	for name, outfit in pairs(TransmogrificationOutfits) do
+		if not outfits[name] then
+			local serverOutfit = {}
+			for slotName, item in pairs(outfit) do
+				if equipmentSlotIDs[slotName] then
+					serverOutfit[equipmentSlotIDs[slotName]] = item
+				end
+			end
+			missing[name] = serverOutfit
+		end
+	end
+	if next(missing) == nil then
+		TransmogrificationOutfits = nil
+	elseif not hasImportedLegacyOutfits then
+		hasImportedLegacyOutfits = true
+		AIO.Handle("TransmogrificationServer", "ImportOutfits", missing)
+	end
+end
+
+function TransmogrificationHandler.ReceiveOutfits(player, serverOutfits)
+	wipe(outfits)
+	for name, serverOutfit in pairs(serverOutfits or {}) do
+		local outfit = {}
+		for slot, item in pairs(serverOutfit) do
+			local slotName = transmogrificationEquipmentSlotMap[tonumber(slot)]
+			if slotName then
+				outfit[slotName] = item
+			end
+		end
+		outfits[name] = outfit
+	end
+
+	if pendingSavedOutfit and outfits[pendingSavedOutfit] then
+		DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. string.format(L["Outfit \"%s\" saved."], pendingSavedOutfit))
+	end
+	pendingSavedOutfit = nil
+
+	ImportLegacyOutfits()
 end
 
 local function GetSortedOutfitNames()
@@ -929,13 +994,13 @@ local function SaveOutfit(name)
 		return
 	end
 
-	-- Save what the preview window currently shows; nil means the slot shows the equipped item.
+	-- Save what the preview window currently shows; slots left out show the equipped item.
 	local outfit = {}
-	for slotName, _ in pairs(equipmentSlotIDs) do
-		outfit[slotName] = previewTransmogrificationIDs[slotName]
+	for slotName, slotID in pairs(equipmentSlotIDs) do
+		outfit[slotID] = previewTransmogrificationIDs[slotName]
 	end
-	GetOutfits()[name] = outfit
-	DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. string.format(L["Outfit \"%s\" saved."], name))
+	pendingSavedOutfit = name
+	AIO.Handle("TransmogrificationServer", "SaveOutfit", name, outfit)
 end
 
 local function LoadOutfit(name)
@@ -957,7 +1022,7 @@ local function LoadOutfit(name)
 end
 
 local function DeleteOutfit(name)
-	GetOutfits()[name] = nil
+	AIO.Handle("TransmogrificationServer", "DeleteOutfit", name)
 	DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. string.format(L["Outfit \"%s\" deleted."], name))
 end
 
@@ -1403,8 +1468,11 @@ local function InitTabSlots()
 	end
 end
 
-function TransmogrificationHandler.InitTab(player, newSlotItemIDs, page, hasMorePages)
+function TransmogrificationHandler.InitTab(player, newSlotItemIDs, page, hasMorePages, appearanceCount)
 	TransmogPaginationText:SetText(string.format(L["Page %s"], page))
+	if TransmogAppearanceCountText then
+		TransmogAppearanceCountText:SetText(string.format(L["%d appearances"], tonumber(appearanceCount) or 0))
+	end
 
 	-- Determine if the slot is empty.
 	local slotName = transmogrificationEquipmentSlotMap[CurrentItemSlot]
@@ -1463,6 +1531,9 @@ function TransmogrificationHandler.InitTab(player, newSlotItemIDs, page, hasMore
 
 					-- Remove the click event because the equipment slot is empty.
 					child.itemButton:SetScript("OnClick", function(self)
+						if HandleAppearanceModifiedClick(self:GetID()) then
+							return
+						end
 						PlaySound("igMainMenuOptionCheckBoxOff", "sfx")
 					end)
 				end
@@ -1640,6 +1711,10 @@ function OnTransmogrificationFrameLoad(self)
 	TransmogrificationFrame:SetScript("OnEvent", OnEventEnterWorldReloadTransmogIDs)
 
 	SetItemButtonTexture(_G["SaveButton"], "Interface\\AddOns\\Transmogrification\\assets\\Transmog-Icon")
+
+	-- Show how many appearances are available for the selected slot (or match the search) under the page number.
+	local appearanceCountText = TransmogrificationFrame:CreateFontString("TransmogAppearanceCountText", "OVERLAY", "GameFontNormalSmall")
+	appearanceCountText:SetPoint("TOP", TransmogPaginationText, "BOTTOM", 0, -4)
 
 	-- Create the saved outfits button next to the Transmogrify button.
 	local outfitsButton = CreateFrame("Button", "TransmogOutfitsButton", TransmogrificationFrame, "UIPanelButtonTemplate")

@@ -16,7 +16,14 @@ This project brings a fully functional Transmog system to AzerothCore servers, c
 
 📚 For more help, check out the [mod-eluna documentation](https://github.com/azerothcore/mod-eluna).
 
+### Upgrading from 2.6.x
+
+1. Replace the server script and the client AddOn with the new versions. **Both must be updated.**
+2. Run `sql/updates/2.7.0_char.sql` against your characters database (once). Outfits players saved with 2.6.x are moved to the server automatically the next time they log in.
+
 ### Upgrading from 2.5.x
+
+Follow these steps, then the 2.6.x steps above.
 
 1. Replace the server script and the client AddOn with the new versions. **Both must be updated** — 2.6.0 changes messages between client and server.
 2. Run `sql/updates/2.6.0_auth.sql` against your auth database and `sql/updates/2.6.0_char.sql` against your characters database (once).
@@ -38,11 +45,22 @@ All options are at the top of `lua_scripts/Transmogrification/transmogrification
 
 - Account-wide appearance collection, synced automatically on login (`/transmog sync` to sync manually).
 - Hide or restore any slot, with a live preview before applying.
+- Search finds a look by the name or item ID of any item that shares it, not just the one you collected. Each slot shows how many appearances are available.
+- **Ctrl-click** an appearance to try it on in the Dressing Room, **Shift-click** to link it in chat.
 - Applying a transmog plays a short spin-and-glow animation on the preview model (can be turned off in the AddOn options).
 - The Transmogrify button on the Character window can be moved with **Shift-drag** (reset it in the AddOn options or with `/transmog resetbutton`).
-- Saved outfits: use the **Outfits** button in the Transmogrify window to save the current preview, load it back later, or delete it. Outfits are stored per character on the client.
+- Saved outfits: use the **Outfits** button in the Transmogrify window to save the current preview, load it back later, or delete it. Outfits are stored per character on the server (up to 20), so they follow the character to any PC.
 
 ## 📝 Changelog
+
+### 2.7.0
+
+- Saved outfits are now stored on the server. Outfits saved with 2.6.x are moved over automatically.
+- Search also matches the names and item IDs of other items that share a collected look.
+- Each slot shows how many appearances are available.
+- Ctrl-click an appearance to try it on in the Dressing Room, Shift-click to link it in chat.
+- Stored transmogs are checked at login; ones that are no longer valid for the equipped item (e.g. left over from before 2.6.0, or after changing the restriction settings) are cleared.
+- `/transmog sync` and the options button now ask the server directly instead of sending a chat command.
 
 ### 2.6.3
 
