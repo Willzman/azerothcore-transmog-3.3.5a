@@ -42,13 +42,17 @@ All options are at the top of `lua_scripts/Transmogrification/transmogrification
 - Account-wide appearance collection, synced automatically on login (`/transmog sync` to sync manually).
 - Hide or restore any slot, with a live preview before applying.
 - Search finds a look by the name or item ID of any item that shares it, not just the one you collected. Each slot shows how many appearances are available.
-- **Weapon glows:** on the Main Hand and Off Hand tabs, the **Weapon Glow** button picks an enchant visual (Crusader, Mongoose, Berserking, …), hides the glow, or goes back to the weapon's own enchant. The choice stays with the slot and is reapplied to whatever weapon is equipped there.
+- **Weapon glows:** on the Main Hand and Off Hand tabs, the **Weapon Glow** button picks an enchant visual (Crusader, Mongoose, Berserking, …), hides the glow, or goes back to the weapon's own enchant. The choice is previewed on the model and applied with **Transmogrify**; it stays with the slot and is reapplied to whatever weapon is equipped there.
 - **Ctrl-click** an appearance to try it on in the Dressing Room, **Shift-click** to link it in chat.
 - Applying a transmog plays a short spin-and-glow animation on the preview model (can be turned off in the AddOn options).
 - The Transmogrify button on the Character window can be moved with **Shift-drag** (reset it in the AddOn options or with `/transmog resetbutton`).
 - Saved outfits: use the **Outfits** button in the Transmogrify window to save the current preview, load it back later, or delete it. Outfits are stored per character on the server (up to 20), so they follow the character to any PC.
 
 ## 📝 Changelog
+
+### 2.8.2
+
+- Weapon glows are previewed on the model in the Transmogrify window and applied with the Transmogrify button, like appearances.
 
 ### 2.8.1
 

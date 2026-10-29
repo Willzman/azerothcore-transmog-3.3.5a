@@ -113,6 +113,11 @@ originalTransmogrificationIDs = {}
 previewTransmogrificationIDs = {}
 currentTransmogrificationIDs = {}
 
+-- Weapon glows (enchant visuals) per weapon slot name: nil = the weapon's own enchant, 0 = no glow.
+-- The preview copy is what the Transmogrify window shows until the player clicks Transmogrify.
+local weaponGlows = {}
+local previewWeaponGlows = {}
+
 -- Cache global functions for performance.
 local GetItemIcon, SetItemButtonTexture, PlaySound, CreateFrame, GameTooltip = GetItemIcon, SetItemButtonTexture, PlaySound, CreateFrame, GameTooltip
 
@@ -413,11 +418,38 @@ local function AddNewAppearanceToLocalList()
 	end)
 end
 
+-- Returns what to try on the preview model for a slot. Weapons get their glow added to the item string
+-- ("item:ID:ENCHANT"), the same way the Dressing Room shows enchanted weapons from a link.
+local function GetTryOnItem(slotName, itemID, glow)
+	if slotName ~= "MainHand" and slotName ~= "SecondaryHand" then
+		return itemID
+	end
+
+	-- Shields and held-in-off-hand items don't show glows.
+	local equipSlot = GetEquipmentSlot(equipmentSlotIDs[slotName])
+	local equippedID = GetInventoryItemID("player", equipSlot)
+	local equipLoc = equippedID and select(9, GetItemInfo(equippedID))
+	if equipLoc == "INVTYPE_SHIELD" or equipLoc == "INVTYPE_HOLDABLE" then
+		return itemID
+	end
+
+	if glow == nil then
+		-- The weapon's own enchant, read from the equipped item's link.
+		local link = GetInventoryItemLink("player", equipSlot)
+		glow = link and tonumber(link:match("item:%-?%d+:(%d+)")) or 0
+	end
+	if glow == 0 then
+		return itemID
+	end
+	return "item:" .. itemID .. ":" .. glow
+end
+
 function LoadTransmogrificationsFromCurrentIDs(useTransmogrificationPreview)
 	TransmogrificationModelFrame:SetUnit("player")
 
 	-- Determine which IDs table to use.
 	local transmogrificationTable = useTransmogrificationPreview and previewTransmogrificationIDs or currentTransmogrificationIDs
+	local glowTable = useTransmogrificationPreview and previewWeaponGlows or weaponGlows
 
 	-- Undress the model, we will update appearances further down in the function.
 	TransmogrificationModelFrame:Undress()
@@ -430,7 +462,7 @@ function LoadTransmogrificationsFromCurrentIDs(useTransmogrificationPreview)
 		if transmogrificationID == nil then
 			local itemID = GetItemIDForEquipmentSlot(slotName)
 			if itemID then
-				TransmogrificationModelFrame:TryOn(itemID)
+				TransmogrificationModelFrame:TryOn(GetTryOnItem(slotName, itemID, glowTable[slotName]))
 			end
 		end
 	end
@@ -438,7 +470,7 @@ function LoadTransmogrificationsFromCurrentIDs(useTransmogrificationPreview)
 	-- Apply transmogrified appearances for items have been transmogrified.
 	for slotName, transmogrificationID in pairs(transmogrificationTable) do
 		if transmogrificationID and transmogrificationID ~= 0 then
-			TransmogrificationModelFrame:TryOn(transmogrificationID)
+			TransmogrificationModelFrame:TryOn(GetTryOnItem(slotName, transmogrificationID, glowTable[slotName]))
 		end
 	end
 
@@ -650,6 +682,9 @@ function TransmogrificationToolTip(btn)
 			break
 		end
 	end
+	if previewWeaponGlows.MainHand ~= weaponGlows.MainHand or previewWeaponGlows.SecondaryHand ~= weaponGlows.SecondaryHand then
+		hasChanges = true
+	end
 
 	if hasChanges then
 		GameTooltip:AddLine("|cffffffff" .. L["Transmogrify"])
@@ -771,6 +806,10 @@ function OnClickTransmogButton(self)
 	wipe(previewTransmogrificationIDs)
 	for slot, transmogID in pairs(currentTransmogrificationIDs) do
 		previewTransmogrificationIDs[slot] = transmogID
+	end
+	wipe(previewWeaponGlows)
+	for slot, glow in pairs(weaponGlows) do
+		previewWeaponGlows[slot] = glow
 	end
 
 	-- Display the players current appearance in the preview window.
@@ -908,6 +947,15 @@ function OnClickApplyAllowTransmogrifications(btn)
 			AIO.Handle("TransmogrificationServer", "EquipTransmogItem", transmogID, entryID)
 			currentTransmogrificationIDs[slotName] = transmogID
 			originalTransmogrificationIDs[slotName] = transmogID
+			hasApplied = true
+		end
+	end
+
+	-- Apply changed weapon glows.
+	for _, slotName in ipairs({ "MainHand", "SecondaryHand" }) do
+		if previewWeaponGlows[slotName] ~= weaponGlows[slotName] then
+			AIO.Handle("TransmogrificationServer", "SetWeaponGlow", equipmentSlotIDs[slotName], previewWeaponGlows[slotName])
+			weaponGlows[slotName] = previewWeaponGlows[slotName]
 			hasApplied = true
 		end
 	end
@@ -1053,10 +1101,9 @@ StaticPopupDialogs["TRANSMOG_SAVE_OUTFIT"] = {
 
 local outfitMenuFrame = nil
 
--- Weapon glows (enchant visuals): the server sends the list it allows and the stored choice per weapon slot.
--- nil = the weapon's own enchant, 0 = no glow. Choosing one applies it right away.
+-- Weapon glows: the server sends the list it allows and the stored choice per weapon slot. Choosing one
+-- previews it on the model; clicking Transmogrify applies it.
 local weaponGlowList = {}
-local weaponGlows = {}
 local weaponGlowMenuFrame = nil
 
 function TransmogrificationHandler.SetWeaponGlowList(player, glows)
@@ -1068,6 +1115,7 @@ function TransmogrificationHandler.SetWeaponGlowClient(player, slot, glow)
 	local slotName = transmogrificationEquipmentSlotMap[tonumber(slot)]
 	if slotName then
 		weaponGlows[slotName] = tonumber(glow)
+		previewWeaponGlows[slotName] = tonumber(glow)
 	end
 end
 
@@ -1088,14 +1136,16 @@ function OnClickWeaponGlowButton(btn)
 	end
 
 	local slot = CurrentItemSlot
-	local current = weaponGlows[transmogrificationEquipmentSlotMap[slot]]
+	local slotName = transmogrificationEquipmentSlotMap[slot]
+	local current = previewWeaponGlows[slotName]
 	local function choice(text, glow)
 		return {
 			text = text,
 			checked = (current == glow),
 			func = function()
 				PlaySound("igMainMenuOptionCheckBoxOn", "sfx")
-				AIO.Handle("TransmogrificationServer", "SetWeaponGlow", slot, glow)
+				previewWeaponGlows[slotName] = glow
+				LoadTransmogrificationsFromCurrentIDs(true)
 			end,
 		}
 	end
@@ -1436,6 +1486,7 @@ function OnHideTransmogrificationFrame(self)
 
 	-- Discard transmogrification preview changes.
 	wipe(previewTransmogrificationIDs)
+	wipe(previewWeaponGlows)
 
 	-- Refresh the transmogrification preview with new information from the server.
 	LoadTransmogrificationsFromCurrentIDs(false)
