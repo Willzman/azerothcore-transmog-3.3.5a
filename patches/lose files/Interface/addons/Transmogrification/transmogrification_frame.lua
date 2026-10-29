@@ -818,8 +818,67 @@ function PaperDollFrame_OnShow(self)
 	LoadTransmogrificationsFromCurrentIDs()
 end
 
+-- Plays a short effect on the preview model after applying: one eased full spin and a glow burst.
+local APPLY_ANIMATION_DURATION = 0.8
+local applyAnimationFrame = nil
+
+local function PlayTransmogrifyAnimation()
+	if Transmogrification and Transmogrification.db and not Transmogrification.db.global.playApplyAnimation then
+		return
+	end
+
+	local model = TransmogrificationModelFrame
+	if not applyAnimationFrame then
+		-- Child frame above the model so the glow draws on top of it.
+		applyAnimationFrame = CreateFrame("Frame", nil, model)
+		applyAnimationFrame:SetAllPoints(model)
+		applyAnimationFrame:SetFrameLevel(model:GetFrameLevel() + 5)
+		applyAnimationFrame.glow = applyAnimationFrame:CreateTexture(nil, "OVERLAY")
+		applyAnimationFrame.glow:SetTexture("Interface\\Cooldown\\star4")
+		applyAnimationFrame.glow:SetBlendMode("ADD")
+		applyAnimationFrame.glow:SetVertexColor(0.95, 0.58, 0.97)
+		applyAnimationFrame.glow:SetPoint("CENTER", model, "CENTER", 0, 20)
+		-- Closing the window mid-animation stops it, so it doesn't resume frozen when reopened.
+		applyAnimationFrame:SetScript("OnHide", function(self)
+			self:SetScript("OnUpdate", nil)
+			self:Hide()
+		end)
+		applyAnimationFrame:Hide()
+	end
+
+	local frame = applyAnimationFrame
+	frame.elapsed = 0
+	frame.startFacing = model:GetFacing()
+	frame:SetScript("OnUpdate", function(self, elapsed)
+		self.elapsed = self.elapsed + elapsed
+		local progress = math.min(self.elapsed / APPLY_ANIMATION_DURATION, 1)
+
+		-- Stop spinning if the player grabs the model to rotate it.
+		if not model.isMouseRotating then
+			local eased = 1 - (1 - progress) ^ 3
+			model:SetFacing(self.startFacing + eased * 2 * math.pi)
+		end
+
+		-- Glow grows and fades out over the first half of the spin.
+		local glowProgress = math.min(progress * 2, 1)
+		local size = 120 + glowProgress * 260
+		self.glow:SetSize(size, size)
+		self.glow:SetAlpha((1 - glowProgress) * 0.9)
+
+		if progress >= 1 then
+			if not model.isMouseRotating then
+				model:SetFacing(self.startFacing)
+			end
+			self:SetScript("OnUpdate", nil)
+			self:Hide()
+		end
+	end)
+	frame:Show()
+end
+
 function OnClickApplyAllowTransmogrifications(btn)
 	PlaySound("Distract Impact", "sfx")
+	local hasApplied = false
 
 	-- Apply transmogrifications on a server level.
 	for slotName, entryID in pairs(equipmentSlotIDs) do
@@ -834,11 +893,16 @@ function OnClickApplyAllowTransmogrifications(btn)
 			AIO.Handle("TransmogrificationServer", "EquipTransmogItem", transmogID, entryID)
 			currentTransmogrificationIDs[slotName] = transmogID
 			originalTransmogrificationIDs[slotName] = transmogID
+			hasApplied = true
 		end
 	end
 
 	-- Refresh the transmogrification preview with new information from the server.
 	LoadTransmogrificationsFromCurrentIDs(false)
+
+	if hasApplied then
+		PlayTransmogrifyAnimation()
+	end
 end
 
 -- Saved outfits: named sets of appearances stored per character. Loading an outfit only fills the preview;

@@ -100,6 +100,15 @@ function GetTransmogrificationOptions()
 				get = function() return Transmogrification:GetSettings().displayCollectionMessages end,
 				set = function(_, value) Transmogrification:UpdateSetting("displayCollectionMessages", value) end,
 			},
+			playApplyAnimation = {
+				name = "|cffffffff" .. L["Play Transmogrify Animation"],
+				desc = "|cffffd200" .. L["Spins the preview model with a glow effect when you apply a transmogrification."],
+				order = 12.5,
+				type = "toggle",
+				width = "double",
+				get = function() return Transmogrification:GetSettings().playApplyAnimation end,
+				set = function(_, value) Transmogrification:UpdateSetting("playApplyAnimation", value) end,
+			},
 			spacer3 = {
 				name = " ",
 				desc = " ",

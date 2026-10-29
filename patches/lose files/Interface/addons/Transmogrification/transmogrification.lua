@@ -10,7 +10,8 @@ local defaultTransmogrificationOptions = {
 		windowOpacity = 1.0,
 		windowLock = false,
 		displayNewAppearanceTooltip = true,
-		displayCollectionMessages = true
+		displayCollectionMessages = true,
+		playApplyAnimation = true
 	}
 }
 

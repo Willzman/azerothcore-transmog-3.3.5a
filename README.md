@@ -38,10 +38,15 @@ All options are at the top of `lua_scripts/Transmogrification/transmogrification
 
 - Account-wide appearance collection, synced automatically on login (`/transmog sync` to sync manually).
 - Hide or restore any slot, with a live preview before applying.
+- Applying a transmog plays a short spin-and-glow animation on the preview model (can be turned off in the AddOn options).
 - The Transmogrify button on the Character window can be moved with **Shift-drag** (reset it in the AddOn options or with `/transmog resetbutton`).
 - Saved outfits: use the **Outfits** button in the Transmogrify window to save the current preview, load it back later, or delete it. Outfits are stored per character on the client.
 
 ## 📝 Changelog
+
+### 2.6.3
+
+- Applying a transmog now plays a spin-and-glow animation on the preview model in the Transmogrify window. Toggle it with "Play Transmogrify Animation" in the AddOn options.
 
 ### 2.6.2
 
