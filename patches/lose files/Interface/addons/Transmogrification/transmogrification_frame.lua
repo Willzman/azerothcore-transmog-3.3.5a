@@ -1053,6 +1053,65 @@ StaticPopupDialogs["TRANSMOG_SAVE_OUTFIT"] = {
 
 local outfitMenuFrame = nil
 
+-- Weapon glows (enchant visuals): the server sends the list it allows and the stored choice per weapon slot.
+-- nil = the weapon's own enchant, 0 = no glow. Choosing one applies it right away.
+local weaponGlowList = {}
+local weaponGlows = {}
+local weaponGlowMenuFrame = nil
+
+function TransmogrificationHandler.SetWeaponGlowList(player, glows)
+	weaponGlowList = type(glows) == "table" and glows or {}
+	UpdateWeaponGlowButton()
+end
+
+function TransmogrificationHandler.SetWeaponGlowClient(player, slot, glow)
+	local slotName = transmogrificationEquipmentSlotMap[tonumber(slot)]
+	if slotName then
+		weaponGlows[slotName] = tonumber(glow)
+	end
+end
+
+-- The button only shows on the main-hand and off-hand tabs, and only if the server allows any glows.
+function UpdateWeaponGlowButton()
+	if not TransmogWeaponGlowButton then return end
+	local isWeaponTab = CurrentItemSlot == PLAYER_VISIBLE_ITEM_16_ENTRYID or CurrentItemSlot == PLAYER_VISIBLE_ITEM_17_ENTRYID
+	if isWeaponTab and #weaponGlowList > 0 then
+		TransmogWeaponGlowButton:Show()
+	else
+		TransmogWeaponGlowButton:Hide()
+	end
+end
+
+function OnClickWeaponGlowButton(btn)
+	if not weaponGlowMenuFrame then
+		weaponGlowMenuFrame = CreateFrame("Frame", "TransmogWeaponGlowMenu", UIParent, "UIDropDownMenuTemplate")
+	end
+
+	local slot = CurrentItemSlot
+	local current = weaponGlows[transmogrificationEquipmentSlotMap[slot]]
+	local function choice(text, glow)
+		return {
+			text = text,
+			checked = (current == glow),
+			func = function()
+				PlaySound("igMainMenuOptionCheckBoxOn", "sfx")
+				AIO.Handle("TransmogrificationServer", "SetWeaponGlow", slot, glow)
+			end,
+		}
+	end
+
+	local menu = {
+		{ text = L["Weapon Glow"], isTitle = true, notCheckable = true },
+		choice(L["Weapon's own enchant"], nil),
+		choice(L["No glow"], 0),
+	}
+	for _, glow in ipairs(weaponGlowList) do
+		table.insert(menu, choice(glow.name, tonumber(glow.id)))
+	end
+
+	EasyMenu(menu, weaponGlowMenuFrame, btn, 0, 0, "MENU")
+end
+
 function OnClickOutfitsButton(btn)
 	if not outfitMenuFrame then
 		outfitMenuFrame = CreateFrame("Frame", "TransmogOutfitMenu", UIParent, "UIDropDownMenuTemplate")
@@ -1473,6 +1532,7 @@ function TransmogrificationHandler.InitTab(player, newSlotItemIDs, page, hasMore
 	if TransmogAppearanceCountText then
 		TransmogAppearanceCountText:SetText(string.format(L["%d appearances"], tonumber(appearanceCount) or 0))
 	end
+	UpdateWeaponGlowButton()
 
 	-- Determine if the slot is empty.
 	local slotName = transmogrificationEquipmentSlotMap[CurrentItemSlot]
@@ -1722,6 +1782,14 @@ function OnTransmogrificationFrameLoad(self)
 	outfitsButton:SetPoint("RIGHT", SaveButton, "LEFT", -12, 0)
 	outfitsButton:SetText(L["Outfits"])
 	outfitsButton:SetScript("OnClick", OnClickOutfitsButton)
+
+	-- Create the weapon glow button next to the outfits button (shown on weapon tabs only).
+	local weaponGlowButton = CreateFrame("Button", "TransmogWeaponGlowButton", TransmogrificationFrame, "UIPanelButtonTemplate")
+	weaponGlowButton:SetSize(100, 22)
+	weaponGlowButton:SetPoint("RIGHT", outfitsButton, "LEFT", -8, 0)
+	weaponGlowButton:SetText(L["Weapon Glow"])
+	weaponGlowButton:SetScript("OnClick", OnClickWeaponGlowButton)
+	weaponGlowButton:Hide()
 
 	TransmogModelMouseRotation(TransmogrificationModelFrame)
 

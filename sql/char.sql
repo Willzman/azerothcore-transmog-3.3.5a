@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS `character_transmog` (
   `slot` varchar(3) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `item` int unsigned DEFAULT NULL,
   `real_item` int unsigned DEFAULT NULL,
+  `enchant` int unsigned DEFAULT NULL,
   PRIMARY KEY (`player_guid`,`slot`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 

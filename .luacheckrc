@@ -32,8 +32,9 @@ files["patches/**/*.lua"] = {
 		"ShowCloak", "ShowCloakCheckBox", "ShowCloakText", "ShowHelm", "ShowHelmCheckBox", "ShowHelmText",
 		"ShowingCloak", "ShowingHelm", "StaticPopupDialogs", "StaticPopup_Show", "Subtitle", "Title",
 		"TransmogAppearanceCountText", "TransmogCloseButton", "TransmogMouseCapture",
-		"TransmogPaginationText", "TransmogWarningFrame", "TransmogWarningText", "Transmogrification",
-		"TransmogrificationFrame", "TransmogrificationModelFrame", "UIParent", "UISpecialFrames",
-		"UnitHasRelicSlot", "UnitRace", "UnitSex", "strfind", "strsub", "strtrim", "tinsert", "wipe"
+		"TransmogPaginationText", "TransmogWarningFrame", "TransmogWarningText", "TransmogWeaponGlowButton",
+		"Transmogrification", "TransmogrificationFrame", "TransmogrificationModelFrame", "UIParent",
+		"UISpecialFrames", "UnitHasRelicSlot", "UnitRace", "UnitSex", "strfind", "strsub", "strtrim",
+		"tinsert", "wipe"
 	},
 }

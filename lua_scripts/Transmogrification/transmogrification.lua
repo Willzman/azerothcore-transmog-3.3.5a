@@ -73,10 +73,50 @@
 -- ║ Already collected appearances stay listed but can no longer be applied.║
 -- ╟────────────────────────────────────────────────────────────────────────╢
       local BLOCKED_TRANSMOG_QUALITIES = {}                               --║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+-- ║                                                                        ║
+-- ║ Weapon glows (enchant visuals) players can choose for main-hand and    ║
+-- ║ off-hand weapons, free for everyone. Each entry is an enchant ID from  ║
+-- ║ SpellItemEnchantment.dbc and the name shown in the menu. Test new IDs  ║
+-- ║ in-game before adding them. Set to {} to turn weapon glows off.        ║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+      local WEAPON_GLOWS = {
+          { id = 1900, name = "Crusader" },
+          { id = 2673, name = "Mongoose" },
+          { id = 3789, name = "Berserking" },
+          { id = 3225, name = "Executioner" },
+          { id = 3790, name = "Black Magic" },
+          { id = 3869, name = "Blade Ward" },
+          { id = 3870, name = "Blood Draining" },
+          { id = 3273, name = "Deathfrost" },
+          { id = 2672, name = "Soulfrost" },
+          { id = 2671, name = "Sunfire" },
+          { id = 2674, name = "Spellsurge" },
+          { id = 2675, name = "Battlemaster" },
+          { id = 803, name = "Fiery Weapon" },
+          { id = 1894, name = "Icy Chill" },
+          { id = 1898, name = "Lifestealing" },
+          { id = 1899, name = "Unholy Weapon" },
+          { id = 3368, name = "Rune of the Fallen Crusader" },
+          { id = 3370, name = "Rune of Razorice" },
+      }
 -- ╚════════════════════════════════════════════════════════════════════════╝
 
 local AIO = AIO or require("AIO")
 local TransmogrificationHandler = AIO.AddHandlers("TransmogrificationServer", {})
+
+-- Bring the characters database up to date if the update scripts in sql/updates were not run, so a
+-- missing table or column can't break transmogs for everyone.
+CharDBQuery([[CREATE TABLE IF NOT EXISTS `character_transmog_outfits` (
+  `player_guid` int unsigned NOT NULL,
+  `name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `items` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  PRIMARY KEY (`player_guid`,`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;]])
+if not CharDBQuery("SHOW COLUMNS FROM `character_transmog` LIKE 'enchant';") then
+	CharDBQuery("ALTER TABLE `character_transmog` ADD COLUMN `enchant` int unsigned DEFAULT NULL;")
+	print("[Eluna] Transmog System: added the `enchant` column to character_transmog.")
+end
 
 -- Per-player limits on how often each client request is handled: at most `count` calls per `window` ms.
 -- EquipTransmogItem is sent once per changed slot when pressing Apply, so it allows bursts.
@@ -92,6 +132,7 @@ local REQUEST_LIMITS = {
 	SaveOutfit = { count = 5, window = 1000 },
 	DeleteOutfit = { count = 5, window = 1000 },
 	ImportOutfits = { count = 1, window = 10000 },
+	SetWeaponGlow = { count = 10, window = 1000 },
 }
 local requestCounts = {}
 
@@ -520,10 +561,38 @@ function TransmogrificationHandler.OnUnequipItem(player)
 	end, REFRESH_DELAY, 1)
 end
 
+-- Weapon glows: the visible enchant field sits right after each visible item field. NULL = the
+-- weapon's own enchant, 0 = no glow, otherwise an enchant ID from WEAPON_GLOWS.
+local WEAPON_GLOW_SLOTS = { [PLAYER_VISIBLE_ITEM_16_ENTRYID] = true, [PLAYER_VISIBLE_ITEM_17_ENTRYID] = true }
+local ALLOWED_WEAPON_GLOWS = {}
+for _, glow in ipairs(WEAPON_GLOWS) do
+	ALLOWED_WEAPON_GLOWS[glow.id] = true
+end
+
+-- Glows only show on weapons, so shields and held-in-off-hand items are skipped.
+local function GetGlowWeapon(player, slot)
+	if not WEAPON_GLOW_SLOTS[slot] then
+		return nil
+	end
+	local item = player:GetEquippedItemBySlot(GetEquipmentSlot(slot))
+	if item and item:GetClass() == 2 then
+		return item
+	end
+	return nil
+end
+
+local function ApplyWeaponGlow(player, slot, weapon, glow)
+	if glow == nil then
+		-- Show the weapon's own permanent and temporary enchants again.
+		glow = (weapon:GetEnchantmentId(0) or 0) + (weapon:GetEnchantmentId(1) or 0) * 65536
+	end
+	player:SetUInt32Value(slot + 1, glow)
+end
+
 function Transmog_Load(player)
 	local playerGUID = player:GetGUIDLow()
 	
-	local transmogs = CharDBQuery("SELECT item, slot FROM character_transmog WHERE player_guid = "..playerGUID..";")
+	local transmogs = CharDBQuery("SELECT item, slot, enchant FROM character_transmog WHERE player_guid = "..playerGUID..";")
 	if (transmogs == nil) then
 		return;
 	end
@@ -535,12 +604,20 @@ function Transmog_Load(player)
 		if (item ~= nil and item ~= '' and player:GetEquippedItemBySlot(GetEquipmentSlot(slot))) then
 			player:SetUInt32Value(slot, item)
 		end
+		
+		-- Equipping resets the enchant field too, so reapply a chosen glow (if it is still on the list).
+		local glow = currentRow["enchant"]
+		local weapon = GetGlowWeapon(player, slot)
+		if weapon and glow ~= nil and (glow == 0 or ALLOWED_WEAPON_GLOWS[glow]) then
+			ApplyWeaponGlow(player, slot, weapon, glow)
+		end
 		transmogs:NextRow()
 	end
 end
 
 function TransmogrificationHandler.LoadPlayer(player)
 	Transmog_Load(player)
+	AIO.Handle(player, "TransmogrificationServer", "SetWeaponGlowList", WEAPON_GLOWS)
 	player:SetUInt32Value(147, 1) -- use unit padding
 end
 
@@ -582,7 +659,7 @@ end
 function TransmogrificationHandler.SetTransmogItemIDs(player)
 	local playerGUID = player:GetGUIDLow()
 	
-	local transmogs = CharDBQuery('SELECT item, real_item, slot FROM character_transmog WHERE player_guid = '..playerGUID..';') -- AND slot NOT IN ("313", "315", "317")
+	local transmogs = CharDBQuery('SELECT item, real_item, slot, enchant FROM character_transmog WHERE player_guid = '..playerGUID..';')
 	if (transmogs == nil) then
 		return;
 	end
@@ -594,8 +671,39 @@ function TransmogrificationHandler.SetTransmogItemIDs(player)
 		local real_item = currentRow["real_item"]
 		-- The database is the source of truth: item NULL = no transmog, 0 = hidden, otherwise the transmog item.
 		AIO.Handle(player, "TransmogrificationServer", "SetTransmogItemIDClient", slot, item, real_item)
+		if WEAPON_GLOW_SLOTS[tonumber(slot)] then
+			AIO.Handle(player, "TransmogrificationServer", "SetWeaponGlowClient", slot, currentRow["enchant"])
+		end
 		transmogs:NextRow()
 	end
+end
+
+-- Sets the glow for a weapon slot: nil = the weapon's own enchant, 0 = no glow, or an ID from WEAPON_GLOWS.
+-- The choice stays with the slot and is reapplied to whatever weapon is equipped there.
+function TransmogrificationHandler.SetWeaponGlow(player, slot, glow)
+	slot = ToTransmogSlot(slot)
+	if not slot or not WEAPON_GLOW_SLOTS[slot] then
+		return
+	end
+	if glow ~= nil then
+		glow = tonumber(glow)
+		if glow ~= 0 and not ALLOWED_WEAPON_GLOWS[glow] then
+			glow = false
+		end
+	end
+	
+	local playerGUID = player:GetGUIDLow()
+	if glow ~= false then
+		CharDBQuery("UPDATE character_transmog SET enchant = "..(glow == nil and "NULL" or glow).." WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
+		local weapon = GetGlowWeapon(player, slot)
+		if weapon then
+			ApplyWeaponGlow(player, slot, weapon, glow)
+		end
+	end
+	
+	-- Confirm the stored glow to the client (this also undoes a rejected choice).
+	local stored = CharDBQuery("SELECT enchant FROM character_transmog WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
+	AIO.Handle(player, "TransmogrificationServer", "SetWeaponGlowClient", slot, stored and stored:GetRow()["enchant"])
 end
 
 -- Sends one page of collected appearances for the slot, optionally filtered by a search string.
