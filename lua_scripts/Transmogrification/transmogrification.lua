@@ -145,7 +145,7 @@ function Transmog_OnCharacterLogin(event, player)
 	end
 end
 
-function TransmogrificationHandler.LootItemLocale(player, item, count, locale)
+local function LootItemLocale(player, item, count, locale)
 	local accountGUID = player:GetAccountId()
 	local itemID
 	local itemTemplate
@@ -228,7 +228,7 @@ function Transmog_OnEquipItem(event, player, item, bag, slot)
 	local locale = player:GetDbLocaleIndex()
 	
 	if ADD_NEWLY_EQUIPPED_ITEMS_TO_THE_TRANSMOG_LIST then
-		TransmogrificationHandler.LootItemLocale(player, itemID, 1, locale)
+		LootItemLocale(player, itemID, 1, locale)
 	end
 	
 	local class = item:GetItemTemplate():GetClass()
@@ -240,13 +240,21 @@ function Transmog_OnEquipItem(event, player, item, bag, slot)
 		
 		if displaySlot then
 			CharDBQuery("UPDATE character_transmog SET real_item = " .. itemID .. " WHERE player_guid = " .. playerGUID .. " AND slot = " .. displaySlot)
+			
+			-- The slot's transmog carries over to the new item only if it is still a valid appearance for it.
+			local transmog = CharDBQuery("SELECT item FROM character_transmog WHERE player_guid = " .. playerGUID .. " AND slot = " .. displaySlot .. ";")
+			local transmogItem = transmog and transmog:GetRow()["item"]
+			if (transmogItem and transmogItem ~= 0 and not CanApplyTransmog(player, displaySlot, item, transmogItem)) then
+				CharDBQuery("UPDATE character_transmog SET item = NULL WHERE player_guid = " .. playerGUID .. " AND slot = " .. displaySlot .. ";")
+				AIO.Handle(player, "TransmogrificationServer", "ClearSlotTransmogrification", displaySlot)
+			end
 		end
 	end
 end
 
 function Transmog_OnLootItem(event, player, item, count)
 	local locale = player:GetDbLocaleIndex()
-	TransmogrificationHandler.LootItemLocale(player, item, 1, locale)
+	LootItemLocale(player, item, 1, locale)
 end
 
 function Transmog_OnQuestComplete(event, player, quest)
@@ -262,7 +270,7 @@ function Transmog_OnQuestComplete(event, player, quest)
 	for i = 0, 9 do
 		local itemID = questRewardsQuery:GetUInt32(i)
 		if itemID and itemID > 0 then
-			TransmogrificationHandler.LootItemLocale(player, itemID, 1, locale)
+			LootItemLocale(player, itemID, 1, locale)
 		end
 	end
 end
@@ -289,47 +297,108 @@ function GetEquipmentSlot(displaySlot)
 	return slotMapping[displaySlot] or Transmog_CalculateSlotReverse(displaySlot)
 end
 
+-- Inventory types that may be used as appearances for each display slot.
+local INVENTORY_TYPES_BY_SLOT = {
+	[PLAYER_VISIBLE_ITEM_1_ENTRYID] = "= 1",
+	[PLAYER_VISIBLE_ITEM_3_ENTRYID] = "= 3",
+	[PLAYER_VISIBLE_ITEM_4_ENTRYID] = "= 4",
+	[PLAYER_VISIBLE_ITEM_5_ENTRYID] = "IN (5, 20)",
+	[PLAYER_VISIBLE_ITEM_6_ENTRYID] = "= 6",
+	[PLAYER_VISIBLE_ITEM_7_ENTRYID] = "= 7",
+	[PLAYER_VISIBLE_ITEM_8_ENTRYID] = "= 8",
+	[PLAYER_VISIBLE_ITEM_9_ENTRYID] = "= 9",
+	[PLAYER_VISIBLE_ITEM_10_ENTRYID] = "= 10",
+	[PLAYER_VISIBLE_ITEM_15_ENTRYID] = "= 16",
+	[PLAYER_VISIBLE_ITEM_16_ENTRYID] = "IN (13, 17, 21)",
+	[PLAYER_VISIBLE_ITEM_17_ENTRYID] = "IN (13, 17, 22, 23, 14)",
+	[PLAYER_VISIBLE_ITEM_18_ENTRYID] = "IN (15, 25, 26)",
+	[PLAYER_VISIBLE_ITEM_19_ENTRYID] = "= 19"
+}
+
+-- Handler arguments come straight from the client, so only accept known display slots.
+local function ToTransmogSlot(slot)
+	slot = tonumber(slot)
+	if slot and INVENTORY_TYPES_BY_SLOT[slot] then
+		return slot
+	end
+	return nil
+end
+
+local function ToPositiveInteger(value)
+	value = tonumber(value)
+	if value and value >= 1 and value <= 4294967295 and value % 1 == 0 then
+		return value
+	end
+	return nil
+end
+
+-- Builds the account_transmog WHERE clause for appearances that can be applied to the given slot.
+function GetTransmogQueryConditions(accountGUID, slot, equippedItem)
+	local inventoryTypes = INVENTORY_TYPES_BY_SLOT[slot]
+	if not inventoryTypes then
+		return nil
+	end
+	
+	local equippedItemType = nil
+	local equippedItemSubType = nil
+	if equippedItem then
+		equippedItemType = equippedItem:GetClass()
+		equippedItemSubType = equippedItem:GetSubClass()
+		
+		-- Armor and weapon subclasses overlap (shield = polearm = 6, misc = axe = 0), so when filtering by
+		-- subclass an off-hand shield or holdable only matches its own inventory type, and weapons only weapons.
+		if slot == PLAYER_VISIBLE_ITEM_17_ENTRYID then
+			if (RESTRICT_ARMOR_TRANSMOG_TO_SIMILAR_MATERIALS and equippedItemType == 4) then
+				inventoryTypes = "= " .. equippedItem:GetItemTemplate():GetInventoryType()
+			elseif (RESTRICT_WEAPON_TRANSMOG_TO_SIMILAR_WEAPONS and equippedItemType == 2) then
+				inventoryTypes = "IN (13, 17, 22)"
+			end
+		end
+	end
+	
+	local queryConditions = "account_id = " .. accountGUID .. " AND inventory_type " .. inventoryTypes
+	
+	if equippedItemSubType then
+		if (RESTRICT_ARMOR_TRANSMOG_TO_SIMILAR_MATERIALS and equippedItemType == 4) then
+			queryConditions = queryConditions .. " AND inventory_subtype = " .. equippedItemSubType
+		elseif (RESTRICT_WEAPON_TRANSMOG_TO_SIMILAR_WEAPONS and equippedItemType == 2) then
+			queryConditions = queryConditions .. " AND inventory_subtype = " .. equippedItemSubType
+		end
+	end
+	
+	return queryConditions
+end
+
+-- Returns true if the account has collected the item and it is a valid appearance for the equipped item.
+function CanApplyTransmog(player, slot, equippedItem, itemID)
+	local queryConditions = GetTransmogQueryConditions(player:GetAccountId(), slot, equippedItem)
+	if not queryConditions then
+		return false
+	end
+	
+	local result = AuthDBQuery("SELECT 1 FROM account_transmog WHERE " .. queryConditions .. " AND unlocked_item_id = " .. itemID .. " LIMIT 1;")
+	return result ~= nil
+end
+
 -- TODO: add lua/c++ function for unequip!!
 function TransmogrificationHandler.OnUnequipItem(player)
 	local playerGUID = player:GetGUIDLow()
 	
-	-- Check all slots to see if any items were unequipped
-	local slots = {
-		PLAYER_VISIBLE_ITEM_1_ENTRYID,  -- Head
-		PLAYER_VISIBLE_ITEM_3_ENTRYID,  -- Shoulder
-		PLAYER_VISIBLE_ITEM_4_ENTRYID,  -- Shirt
-		PLAYER_VISIBLE_ITEM_5_ENTRYID,  -- Chest
-		PLAYER_VISIBLE_ITEM_6_ENTRYID,  -- Waist
-		PLAYER_VISIBLE_ITEM_7_ENTRYID,  -- Legs
-		PLAYER_VISIBLE_ITEM_8_ENTRYID,  -- Feet
-		PLAYER_VISIBLE_ITEM_9_ENTRYID,  -- Wrist
-		PLAYER_VISIBLE_ITEM_10_ENTRYID, -- Hands
-		PLAYER_VISIBLE_ITEM_15_ENTRYID, -- Back
-		PLAYER_VISIBLE_ITEM_16_ENTRYID, -- Main
-		PLAYER_VISIBLE_ITEM_17_ENTRYID, -- Off
-		PLAYER_VISIBLE_ITEM_18_ENTRYID, -- Ranged
-		PLAYER_VISIBLE_ITEM_19_ENTRYID  -- Tabard
-	}
-	
-	for _, slot in ipairs(slots) do
-		-- Get the corresponding equipment slot
-		local equipmentSlot = GetEquipmentSlot(slot)
-		
-		-- Check if this slot has an item equipped
-		local currentItem = player:GetEquippedItemBySlot(equipmentSlot)
-		
-		-- If the slot is empty but we have a transmog value, we need to clear it
-		if not currentItem then
-			local transmogQuery = CharDBQuery("SELECT item FROM character_transmog WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
+	-- Clear transmogs from slots that no longer have an item equipped.
+	local transmogs = CharDBQuery("SELECT slot FROM character_transmog WHERE player_guid = "..playerGUID.." AND item > 0;")
+	if transmogs then
+		for i = 1, transmogs:GetRowCount() do
+			local slot = tonumber(transmogs:GetRow()["slot"])
 			
-			if transmogQuery and transmogQuery:GetUInt32(0) and transmogQuery:GetUInt32(0) > 0 then
+			if not player:GetEquippedItemBySlot(GetEquipmentSlot(slot)) then
 				-- Clear the transmog by setting both item and real_item to NULL
 				CharDBQuery("UPDATE character_transmog SET item = NULL, real_item = NULL WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
-				player:SetUInt32Value(tonumber(slot), 0)
+				player:SetUInt32Value(slot, 0)
 				
 				-- Inform the client to update the display for this slot
 				AIO.Handle(player, "TransmogrificationServer", "ClearSlotTransmogrification", slot)
 			end
+			transmogs:NextRow()
 		end
 	end
 	
@@ -372,45 +441,36 @@ end
 function TransmogrificationHandler.EquipTransmogItem(player, item, slot)
 	local playerGUID = player:GetGUIDLow()
 	
-	if item == nil and item ~= 0 then
-		local oldItem = CharDBQuery("SELECT real_item FROM character_transmog WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
-		local oldItemID = oldItem:GetUInt32(0)
-		if oldItemID == nil or oldItemID == 0 then
-			CharDBQuery("INSERT INTO character_transmog (`player_guid`, `slot`, `item`) VALUES ("..playerGUID..", '"..slot.."', NULL) ON DUPLICATE KEY UPDATE item = VALUES(item);")
-			player:SetUInt32Value(tonumber(slot), 0)
-			return
-		end
-
-		CharDBQuery("INSERT INTO character_transmog (`player_guid`, `slot`, `item`, `real_item`) VALUES ("..playerGUID..", '"..slot.."', NULL, "..oldItemID..") ON DUPLICATE KEY UPDATE item = VALUES(item), real_item = VALUES(real_item);")
-		player:SetUInt32Value(tonumber(slot), oldItemID)
+	-- Only allow transmogs onto an equipped item, using an appearance the account has collected (0 = hidden, nil = restore).
+	slot = ToTransmogSlot(slot)
+	if not slot then
 		return
 	end
-	
-	local oldItem = CharDBQuery("SELECT real_item FROM character_transmog WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
-	local oldItemID = oldItem:GetUInt32(0)
-	if oldItemID == nil or oldItemID == 0 then
-		CharDBQuery("INSERT INTO character_transmog (`player_guid`, `slot`, `item`) VALUES ("..playerGUID..", '"..slot.."', "..item..") ON DUPLICATE KEY UPDATE item = VALUES(item);")
-	else
-		CharDBQuery("INSERT INTO character_transmog (`player_guid`, `slot`, `item`, `real_item`) VALUES ("..playerGUID..", '"..slot.."', "..item..", "..oldItemID..") ON DUPLICATE KEY UPDATE item = VALUES(item), real_item = VALUES(real_item);")
+	local equippedItem = player:GetEquippedItemBySlot(GetEquipmentSlot(slot))
+	if not equippedItem then
+		return
 	end
-	player:SetUInt32Value(tonumber(slot), item)
-end
-
-function TransmogrificationHandler.EquipAllTransmogItems(player, transmogPreview)
-	if (transmogPreview == {}) then
-		return;
+	if item ~= nil and item ~= 0 then
+		item = ToPositiveInteger(item)
+		if not item or not CanApplyTransmog(player, slot, equippedItem, item) then
+			return
+		end
 	end
 	
-	local playerGUID = player:GetGUIDLow()
-	
-	for slot, item in ipairs(transmogPreview) do
-		player:SetUInt32Value(tonumber(slot), item)
-		CharDBQuery("INSERT INTO character_transmog (`player_guid`, `slot`, `item`) VALUES ("..playerGUID..", '"..slot.."', "..item..") ON DUPLICATE KEY UPDATE item = VALUES(item);")
-	end
+	-- Store what is actually equipped as real_item; restoring (nil) shows that item again.
+	local realItemID = equippedItem:GetEntry()
+	local itemValue = (item == nil) and "NULL" or item
+	CharDBQuery("INSERT INTO character_transmog (`player_guid`, `slot`, `item`, `real_item`) VALUES ("..playerGUID..", '"..slot.."', "..itemValue..", "..realItemID..") ON DUPLICATE KEY UPDATE item = VALUES(item), real_item = VALUES(real_item);")
+	player:SetUInt32Value(slot, item or realItemID)
 end
 
 function TransmogrificationHandler.UnequipTransmogItem(player, slot)
 	local playerGUID = player:GetGUIDLow()
+	
+	slot = ToTransmogSlot(slot)
+	if not slot then
+		return
+	end
 	
 	-- Get the corresponding equipment slot using our mapping function
 	local equipmentSlot = GetEquipmentSlot(slot)
@@ -450,10 +510,6 @@ function TransmogrificationHandler.displayTransmog(player, spellid)
 	return false
 end
 
-function TransmogrificationHandler.Print(player, ...)
-	print(...)
-end
-
 function TransmogrificationHandler.SetTransmogItemIDs(player)
 	local playerGUID = player:GetGUIDLow()
 	
@@ -473,208 +529,27 @@ function TransmogrificationHandler.SetTransmogItemIDs(player)
 	end
 end
 
-function TransmogrificationHandler.SetCurrentSlotItemIDs(player, slot, page)
-    local accountGUID = player:GetAccountId()
-
-    -- Define inventory type mapping
-    local inventoryTypesMapping = {
-        [PLAYER_VISIBLE_ITEM_1_ENTRYID] = "= 1",
-        [PLAYER_VISIBLE_ITEM_3_ENTRYID] = "= 3",
-        [PLAYER_VISIBLE_ITEM_4_ENTRYID] = "= 4",
-        [PLAYER_VISIBLE_ITEM_5_ENTRYID] = "IN (5, 20)",
-        [PLAYER_VISIBLE_ITEM_6_ENTRYID] = "= 6",
-        [PLAYER_VISIBLE_ITEM_7_ENTRYID] = "= 7",
-        [PLAYER_VISIBLE_ITEM_8_ENTRYID] = "= 8",
-        [PLAYER_VISIBLE_ITEM_9_ENTRYID] = "= 9",
-        [PLAYER_VISIBLE_ITEM_10_ENTRYID] = "= 10",
-        [PLAYER_VISIBLE_ITEM_15_ENTRYID] = "= 16",
-        [PLAYER_VISIBLE_ITEM_16_ENTRYID] = "IN (13, 17, 21)",
-        [PLAYER_VISIBLE_ITEM_17_ENTRYID] = "IN (13, 17, 22, 23, 14)",
-        [PLAYER_VISIBLE_ITEM_18_ENTRYID] = "IN (15, 25, 26)",
-        [PLAYER_VISIBLE_ITEM_19_ENTRYID] = "= 19"
-    }
-
-    -- Get the inventory type for the given slot
-    local inventoryTypes = inventoryTypesMapping[slot]
-    if not inventoryTypes then
-        return -- Slot not valid, exit early
-    end
-    
-    local equipmentSlot = nil
-    
-    if slot == PLAYER_VISIBLE_ITEM_3_ENTRYID then
-        equipmentSlot = 2 -- Shoulder
-    elseif slot == PLAYER_VISIBLE_ITEM_4_ENTRYID then
-        equipmentSlot = 3 -- Shirt
-    elseif slot == PLAYER_VISIBLE_ITEM_5_ENTRYID then
-        equipmentSlot = 4 -- Chest
-    elseif slot == PLAYER_VISIBLE_ITEM_6_ENTRYID then
-        equipmentSlot = 5 -- Waist
-    elseif slot == PLAYER_VISIBLE_ITEM_10_ENTRYID then
-        equipmentSlot = 9 -- Hands
-    elseif slot == PLAYER_VISIBLE_ITEM_15_ENTRYID then
-        equipmentSlot = 14 -- Back
-    elseif slot == PLAYER_VISIBLE_ITEM_16_ENTRYID then
-        equipmentSlot = 15 -- Main
-    elseif slot == PLAYER_VISIBLE_ITEM_17_ENTRYID then
-        equipmentSlot = 16 -- Off
-    elseif slot == PLAYER_VISIBLE_ITEM_18_ENTRYID then
-        equipmentSlot = 17 -- Ranged
-    else
-        equipmentSlot = Transmog_CalculateSlotReverse(slot)
-    end
-    
-    local currentItem = player:GetEquippedItemBySlot(equipmentSlot)
-    local equippedItemType = nil
-    local equippedItemSubType = nil
-    
-    if currentItem then
-        equippedItemType = currentItem:GetClass()
-        equippedItemSubType = currentItem:GetSubClass()
-    end
-
-    -- Calculate page offset for pagination
-    local pageOffset = (page > 1) and (SLOTS * (page - 1)) or 0
-    
-    local queryConditions = "account_id = " .. accountGUID .. " AND inventory_type " .. inventoryTypes
-    
-	if equippedItemSubType then
-		if (RESTRICT_ARMOR_TRANSMOG_TO_SIMILAR_MATERIALS and equippedItemType == 4) then
-			if slot == PLAYER_VISIBLE_ITEM_5_ENTRYID then -- Special check for chestpiece/robes.
-				queryConditions = queryConditions .. " AND inventory_subtype = " .. equippedItemSubType
-			else
-				queryConditions = queryConditions .. " AND inventory_subtype = " .. equippedItemSubType
-			end
-		elseif (RESTRICT_WEAPON_TRANSMOG_TO_SIMILAR_WEAPONS and equippedItemType == 2) then
-			queryConditions = queryConditions .. " AND inventory_subtype = " .. equippedItemSubType
-		end
-	end
-
-    -- Query to count matching transmogs
-    local countQuery = string.format(
-        "SELECT COUNT(unlocked_item_id) FROM account_transmog WHERE %s",
-        queryConditions
-    )
-    local countResult = AuthDBQuery(countQuery)
-    if not countResult then
-        AIO.Handle(player, "TransmogrificationServer", "InitTab", {}, page, false)
-        return
-    end
-
-    -- Get the total number of transmogs
-    local totalTransmogs = countResult:GetUInt32(0)
-    local hasMorePages = (totalTransmogs > SLOTS * page)
-
-    -- Query to retrieve transmogs for the current page
-    local transmogQuery = string.format(
-        "SELECT unlocked_item_id FROM account_transmog WHERE %s LIMIT %d OFFSET %d;",
-        queryConditions, SLOTS, pageOffset
-    )
-    local transmogs = AuthDBQuery(transmogQuery)
-    if not transmogs then
-        AIO.Handle(player, "TransmogrificationServer", "InitTab", {}, page, false)
-        return
-    end
-
-    -- Collect the unlocked item IDs
-    local currentSlotItemIDs = {}
-    for i = 1, transmogs:GetRowCount() do
-        local currentRow = transmogs:GetRow()
-        local item = currentRow["unlocked_item_id"]
-        table.insert(currentSlotItemIDs, item)
-        transmogs:NextRow()
-    end
-
-    -- Return the result to the player
-    AIO.Handle(player, "TransmogrificationServer", "InitTab", currentSlotItemIDs, page, hasMorePages)
-end
-
-function TransmogrificationHandler.SetSearchCurrentSlotItemIDs(player, slot, page, search)
-	-- Ensure search is not empty or nil
-	if ( search == nil or serach == '' ) then
-		return;
-	end
-
-	-- Escape special characters in search string
-	search = search:gsub("[%'`&\"]", "%%")
-
-	-- Define slot-to-inventory type mapping
-	local inventoryTypesMapping = {
-		[PLAYER_VISIBLE_ITEM_1_ENTRYID] = "= 1",
-		[PLAYER_VISIBLE_ITEM_3_ENTRYID] = "= 3",
-		[PLAYER_VISIBLE_ITEM_4_ENTRYID] = "= 4",
-		[PLAYER_VISIBLE_ITEM_5_ENTRYID] = "IN (5, 20)",
-		[PLAYER_VISIBLE_ITEM_6_ENTRYID] = "= 6",
-		[PLAYER_VISIBLE_ITEM_7_ENTRYID] = "= 7",
-		[PLAYER_VISIBLE_ITEM_8_ENTRYID] = "= 8",
-		[PLAYER_VISIBLE_ITEM_9_ENTRYID] = "= 9",
-		[PLAYER_VISIBLE_ITEM_10_ENTRYID] = "= 10",
-		[PLAYER_VISIBLE_ITEM_15_ENTRYID] = "= 16",
-		[PLAYER_VISIBLE_ITEM_16_ENTRYID] = "IN (13, 17, 21)",
-		[PLAYER_VISIBLE_ITEM_17_ENTRYID] = "IN (13, 17, 22, 23, 14)",
-		[PLAYER_VISIBLE_ITEM_18_ENTRYID] = "IN (15, 25, 26)",
-		[PLAYER_VISIBLE_ITEM_19_ENTRYID] = "= 19"
-	}
-
-	-- Get inventory type for the given slot
-	local inventoryTypes = inventoryTypesMapping[slot]
-	if not inventoryTypes then
-		return -- Slot not valid
+-- Sends one page of collected appearances for the slot, optionally filtered by a search string.
+local function SendSlotItemIDs(player, slot, page, search)
+	slot = ToTransmogSlot(slot)
+	page = ToPositiveInteger(page)
+	if not slot or not page then
+		return
 	end
 	
-	local equipmentSlot = nil
+	local equippedItem = player:GetEquippedItemBySlot(GetEquipmentSlot(slot))
+	local queryConditions = GetTransmogQueryConditions(player:GetAccountId(), slot, equippedItem)
 	
-	if slot == PLAYER_VISIBLE_ITEM_3_ENTRYID then
-		equipmentSlot = 2 -- Shoulder
-    elseif slot == PLAYER_VISIBLE_ITEM_4_ENTRYID then
-        equipmentSlot = 3 -- Shirt
-    elseif slot == PLAYER_VISIBLE_ITEM_5_ENTRYID then
-        equipmentSlot = 4 -- Chest
-    elseif slot == PLAYER_VISIBLE_ITEM_6_ENTRYID then
-        equipmentSlot = 5 -- Waist
-    elseif slot == PLAYER_VISIBLE_ITEM_10_ENTRYID then
-        equipmentSlot = 9 -- Hands
-	elseif slot == PLAYER_VISIBLE_ITEM_15_ENTRYID then
-		equipmentSlot = 14 -- Back
-	elseif slot == PLAYER_VISIBLE_ITEM_16_ENTRYID then
-		equipmentSlot = 15 -- Main
-	elseif slot == PLAYER_VISIBLE_ITEM_17_ENTRYID then
-		equipmentSlot = 16 -- Off
-	elseif slot == PLAYER_VISIBLE_ITEM_18_ENTRYID then
-		equipmentSlot = 17 -- Ranged
-	else
-		equipmentSlot = Transmog_CalculateSlotReverse(slot)
+	if search then
+		queryConditions = queryConditions .. " AND (display_id LIKE '%" .. search .. "%' OR item_name LIKE '%" .. search .. "%')"
 	end
 	
-	local currentItem = player:GetEquippedItemBySlot(equipmentSlot)
-	local equippedItemType = nil
-	local equippedItemSubType = nil
-	
-	if currentItem then
-		equippedItemType = currentItem:GetClass()
-		equippedItemSubType = currentItem:GetSubClass()
-	end
-
-	-- Calculate page offset
+	-- Calculate page offset for pagination
 	local pageOffset = (page > 1) and (SLOTS * (page - 1)) or 0
-	
-	local queryConditions = "account_id = " .. player:GetAccountId() .. " AND inventory_type " .. inventoryTypes .. " AND (display_id LIKE '%" .. search .. "%' OR item_name LIKE '%" .. search .. "%')"
-	
-	if equippedItemSubType then
-		if (RESTRICT_ARMOR_TRANSMOG_TO_SIMILAR_MATERIALS and equippedItemType == 4) then
-			if slot == PLAYER_VISIBLE_ITEM_5_ENTRYID then -- Special check for chestpiece/robes.
-				queryConditions = queryConditions .. " AND inventory_subtype = " .. equippedItemSubType
-			else
-				queryConditions = queryConditions .. " AND inventory_subtype = " .. equippedItemSubType
-			end
-		elseif (RESTRICT_WEAPON_TRANSMOG_TO_SIMILAR_WEAPONS and equippedItemType == 2) then
-			queryConditions = queryConditions .. " AND inventory_subtype = " .. equippedItemSubType
-		end
-	end
 	
 	-- Query to count matching transmogs
 	local countQuery = string.format(
-		"SELECT COUNT(unlocked_item_id) FROM account_transmog WHERE %s;", 
+		"SELECT COUNT(unlocked_item_id) FROM account_transmog WHERE %s;",
 		queryConditions
 	)
 	local countResult = AuthDBQuery(countQuery)
@@ -682,13 +557,14 @@ function TransmogrificationHandler.SetSearchCurrentSlotItemIDs(player, slot, pag
 		AIO.Handle(player, "TransmogrificationServer", "InitTab", {}, page, false)
 		return
 	end
-
+	
+	-- Get the total number of transmogs
 	local totalTransmogs = countResult:GetUInt32(0)
 	local hasMorePages = (totalTransmogs > SLOTS * page)
-
-	-- Query to get transmogs
+	
+	-- Query to retrieve transmogs for the current page
 	local transmogQuery = string.format(
-		"SELECT unlocked_item_id FROM account_transmog WHERE %s LIMIT %d OFFSET %d;", 
+		"SELECT unlocked_item_id FROM account_transmog WHERE %s LIMIT %d OFFSET %d;",
 		queryConditions, SLOTS, pageOffset
 	)
 	local transmogs = AuthDBQuery(transmogQuery)
@@ -696,7 +572,7 @@ function TransmogrificationHandler.SetSearchCurrentSlotItemIDs(player, slot, pag
 		AIO.Handle(player, "TransmogrificationServer", "InitTab", {}, page, false)
 		return
 	end
-
+	
 	-- Collect the unlocked item IDs
 	local currentSlotItemIDs = {}
 	for i = 1, transmogs:GetRowCount() do
@@ -705,13 +581,34 @@ function TransmogrificationHandler.SetSearchCurrentSlotItemIDs(player, slot, pag
 		table.insert(currentSlotItemIDs, item)
 		transmogs:NextRow()
 	end
-
-	-- Return the result
+	
+	-- Return the result to the player
 	AIO.Handle(player, "TransmogrificationServer", "InitTab", currentSlotItemIDs, page, hasMorePages)
+end
+
+function TransmogrificationHandler.SetCurrentSlotItemIDs(player, slot, page)
+	SendSlotItemIDs(player, slot, page, nil)
+end
+
+function TransmogrificationHandler.SetSearchCurrentSlotItemIDs(player, slot, page, search)
+	-- Ensure search is not empty or nil
+	if ( type(search) ~= "string" or search == '' ) then
+		return;
+	end
+	
+	-- Escape special characters in search string
+	search = search:gsub("[%'`&\"\\]", "%%")
+	
+	SendSlotItemIDs(player, slot, page, search)
 end
 
 function TransmogrificationHandler.SetEquipmentTransmogInfo(player, slot, currentSlotTooltip)
 	local playerGUID = player:GetGUIDLow()
+	
+	slot = ToTransmogSlot(slot)
+	if not slot then
+		return
+	end
 	
 	local transmog = CharDBQuery("SELECT COUNT(item) FROM character_transmog WHERE player_guid = "..playerGUID.." AND slot = '"..slot.."';")
 	if (transmog == nil) then
@@ -724,6 +621,11 @@ function TransmogrificationHandler.SetEquipmentTransmogInfo(player, slot, curren
 end
 
 function TransmogrificationHandler.GetItemsWithSameAppearance(player, itemID)
+	itemID = ToPositiveInteger(itemID)
+	if not itemID then
+		return
+	end
+	
 	-- Query the server for the display ID of the new item
 	local displayIDQuery = "SELECT displayid FROM item_template WHERE entry = " .. itemID .. ";"
 	local displayIDResult = WorldDBQuery(displayIDQuery)
@@ -781,18 +683,16 @@ function TransmogrificationHandler.SendCollectedTransmogItemIDs(player)
 	
 	local collectedAppearances = {}
 	
-	-- For each display ID, find all items that share the appearance
-	for _, displayID in ipairs(collectedDisplayIDs) do
-		local itemsWithDisplayQuery = "SELECT entry FROM item_template WHERE displayid = " .. displayID .. ";"
-		local itemsResult = WorldDBQuery(itemsWithDisplayQuery)
-		
-		if itemsResult then
-			for j = 1, itemsResult:GetRowCount() do
-				local itemRow = itemsResult:GetRow()
-				local itemID = itemRow["entry"]
-				table.insert(collectedAppearances, itemID)
-				itemsResult:NextRow()
-			end
+	-- Find all items that share any of the collected appearances
+	local itemsWithDisplayQuery = "SELECT entry FROM item_template WHERE displayid IN (" .. table.concat(collectedDisplayIDs, ", ") .. ");"
+	local itemsResult = WorldDBQuery(itemsWithDisplayQuery)
+	
+	if itemsResult then
+		for j = 1, itemsResult:GetRowCount() do
+			local itemRow = itemsResult:GetRow()
+			local itemID = itemRow["entry"]
+			table.insert(collectedAppearances, itemID)
+			itemsResult:NextRow()
 		end
 	end
 	

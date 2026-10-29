@@ -361,7 +361,13 @@ TransmogrificationHandler.ReceiveMatchingAppearances = function(player, original
 	end
 end
 
+local isChatMonitorRegistered = false
+
 local function AddNewAppearanceToLocalList()
+	-- Called on every PLAYER_ENTERING_WORLD; only create the listener once.
+	if isChatMonitorRegistered then return end
+	isChatMonitorRegistered = true
+
 	local chatMonitor = CreateFrame("Frame")
 	chatMonitor:RegisterEvent("CHAT_MSG_SYSTEM")
 
@@ -1407,17 +1413,7 @@ function OnTransmogrificationFrameLoad(self)
 
 	-- Apply settings when Transmogrification frame is initialized.
 	if Transmogrification and Transmogrification.db then
-		local settings = Transmogrification:GetSettings()
-		TransmogrificationFrame:SetScale(settings.transmogrificationWindowScale)
-		TransmogrificationFrame:SetAlpha(settings.transmogrificationWindowOpacity)
-
-		if settings.transmogrificationWindowLock then
-			TransmogrificationFrame:SetMovable(false)
-			TransmogrificationFrame:RegisterForDrag()
-		else
-			TransmogrificationFrame:SetMovable(true)
-			TransmogrificationFrame:RegisterForDrag("LeftButton")
-		end
+		Transmogrification:ApplyWindowSettings()
 	end
 
 	_G["TransmogrificationFrame"] = TransmogrificationFrame
