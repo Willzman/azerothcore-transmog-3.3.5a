@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS `account_transmog` (
   `display_id` int unsigned NOT NULL,
   `item_name` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   UNIQUE KEY `account_item_id` (`account_id`,`unlocked_item_id`) USING BTREE,
-  UNIQUE KEY `account_display_id` (`account_id`,`display_id`)
+  UNIQUE KEY `account_display_id` (`account_id`,`display_id`),
+  KEY `account_inventory_type` (`account_id`,`inventory_type`,`inventory_subtype`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- Daten-Export vom Benutzer nicht ausgewählt

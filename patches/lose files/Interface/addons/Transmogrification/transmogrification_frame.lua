@@ -107,6 +107,8 @@ local isTooltipHooked = false
 local CurrentItemSlot = PLAYER_VISIBLE_ITEM_1_ENTRYID
 local currentPage = 1
 local currentSlotTooltip = nil
+local transmogCost = 0
+local hasSyncedCollection = false
 -- Transmogrification state is always synced from the server on PLAYER_ENTERING_WORLD, never restored from SavedVariables.
 originalTransmogrificationIDs = {}
 previewTransmogrificationIDs = {}
@@ -317,16 +319,46 @@ function TransmogrificationHandler.SetTransmogItemIDClient(player, slot, id, rea
 	UpdateAllSlotTextures()
 end
 
--- Receives and saves a local list of collected transmogrification appearances, useful for displaying the "New Appearance" tooltip line.
-function TransmogrificationHandler.ReceiveCollectedAppearances(player, collectedAppearances, uniqueAppearancesCount)
-	-- Clear the collected transmogrification appearances table.
-	wipe(CollectedAppearances)
+-- Receives the server's cost (in copper) to apply an appearance to one slot.
+function TransmogrificationHandler.SetTransmogCost(player, cost)
+	transmogCost = tonumber(cost) or 0
+end
 
-	-- Save received collected transmogrification appearances to a local table.
-	for i, itemID in ipairs(collectedAppearances) do
+-- CollectedAppearances is saved as a list; this set mirrors it for fast tooltip lookups.
+local collectedAppearanceSet = nil
+
+local function GetCollectedAppearanceSet()
+	if not collectedAppearanceSet then
+		collectedAppearanceSet = {}
+		for _, itemID in ipairs(CollectedAppearances or {}) do
+			collectedAppearanceSet[itemID] = true
+		end
+	end
+	return collectedAppearanceSet
+end
+
+local function AddCollectedAppearance(itemID)
+	local set = GetCollectedAppearanceSet()
+	if not set[itemID] then
+		set[itemID] = true
 		table.insert(CollectedAppearances, itemID)
 	end
-	
+end
+
+-- Receives and saves a local list of collected transmogrification appearances, useful for displaying the "New Appearance" tooltip line.
+-- The client requests this silently on login; `silent` is false when the player used /transmog sync.
+function TransmogrificationHandler.ReceiveCollectedAppearances(player, collectedAppearances, uniqueAppearancesCount, silent)
+	-- Replace the collected transmogrification appearances with the server's list.
+	wipe(CollectedAppearances)
+	collectedAppearanceSet = nil
+	for i, itemID in ipairs(collectedAppearances) do
+		AddCollectedAppearance(itemID)
+	end
+
+	if silent then
+		return
+	end
+
 	local collectedAppearancesCount = uniqueAppearancesCount or 0
 
 	if collectedAppearancesCount == 0 then
@@ -334,8 +366,6 @@ function TransmogrificationHandler.ReceiveCollectedAppearances(player, collected
 	else
 		DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. L["Your transmogrification appearance collection has been successfully synchronized!"] .. "\n")
 		DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. L["You have collected "] .. "|cff" .. L["f194f7"] .. tostring(collectedAppearancesCount) .. "|cffffff00" .. L[" transmogrification appearances."] .. "\n")
-		DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. L["It is recommended that you "] .. "|cff" .. L["00ccff"] .. L["/reload"] .. "|cffffff00" .. L[" your interface to finalize any changes, otherwise the "] .. "|cff" .. L["f194f7"] .. L["New Appearance"] .. "|cffffff00" .. L[" tooltip line may not function correctly."])
-		Transmogrification:DisplayReloadPrompt()
 	end
 end
 
@@ -343,21 +373,8 @@ end
 -- We utilize the system message to naturally respect the server options in regards to when a new appearance should be added to the players collection.
 -- That being said, this function will break if the system message string does not match the string in `server_transmog.lua`.
 TransmogrificationHandler.ReceiveMatchingAppearances = function(player, originalItemID, matchingItems)
-	-- Add all matching items to our local list
 	for _, itemID in ipairs(matchingItems) do
-		-- Check if already collected
-		local alreadyCollected = false
-		for _, id in ipairs(CollectedAppearances) do
-			if id == itemID then
-				alreadyCollected = true
-				break
-			end
-		end
-		
-		-- If not already in the list, add it
-		if not alreadyCollected then
-			table.insert(CollectedAppearances, itemID)
-		end
+		AddCollectedAppearance(itemID)
 	end
 end
 
@@ -381,35 +398,12 @@ local function AddNewAppearanceToLocalList()
 				local itemID = tonumber(itemLink)
 
 				if itemID then
-					-- Determine if the item appearance has already been collected for some reason.
-					local alreadyCollected = false
-					for _, id in ipairs(CollectedAppearances) do
-						if id == itemID then
-							alreadyCollected = true
-							break
-						end
-					end
-
-					-- If the item appearance has not already been collected (this should always be the case) save it to the local list.
-					if not alreadyCollected then
-						table.insert(CollectedAppearances, itemID)
-					end
-					
+					AddCollectedAppearance(itemID)
 					AIO.Handle("TransmogrificationServer", "GetItemsWithSameAppearance", itemID)
 				end
 			end
 		end
 	end)
-end
-
--- Determine whether the new appearance system message should be displayed to the player.
--- This does not determine whether the item is added to the local list, just if the player should see the system message.
-local function collectionMessageFilter(self, event, msg)
-	if not Transmogrification.db.global.displayCollectionMessages and
-		msg:find(L["has been added to your appearance collection."]) then
-		return true -- Hide the system message.
-	end
-	return false -- Show the system message.
 end
 
 function LoadTransmogrificationsFromCurrentIDs(useTransmogrificationPreview)
@@ -594,17 +588,26 @@ end
 function TransmogrificationToolTip(btn)
 	GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
 
-	-- Determine if there are transmogrification appearance changes to apply.
+	-- Determine if there are transmogrification appearance changes to apply, and how many of them cost money.
 	local hasChanges = false
-	for slotName, transmogID in pairs(previewTransmogrificationIDs) do
-		if transmogID ~= currentTransmogrificationIDs[slotName] then
+	local paidChanges = 0
+	for slotName, slotID in pairs(equipmentSlotIDs) do
+		local transmogID = previewTransmogrificationIDs[slotName]
+		local equipSlot = GetEquipmentSlot(slotID)
+		local hasItem = equipSlot and GetInventoryItemID("player", equipSlot) ~= nil
+		if hasItem and transmogID ~= currentTransmogrificationIDs[slotName] then
 			hasChanges = true
-			break
+			if transmogID ~= nil and transmogID ~= 0 then
+				paidChanges = paidChanges + 1
+			end
 		end
 	end
 
 	if hasChanges then
 		GameTooltip:AddLine("|cffffffff" .. L["Transmogrify"])
+		if transmogCost > 0 and paidChanges > 0 then
+			GameTooltip:AddLine("|cffffd200" .. string.format(L["Cost: %s"], GetCoinTextureString(transmogCost * paidChanges)))
+		end
 	else
 		GameTooltip:AddLine("|cffffffff" .. L["Transmogrify"])
 		GameTooltip:AddLine("|cff808080" .. L["No appearances to apply."])
@@ -642,7 +645,7 @@ local function HookItemTooltip()
 		if IsEquippableItem(id) and itemEquipSlot and itemEquipSlot ~= "INVTYPE_AMMO" and
 		itemEquipSlot ~= "INVTYPE_NECK" and itemEquipSlot ~= "INVTYPE_FINGER" and
 		itemEquipSlot ~= "INVTYPE_TRINKET" and itemEquipSlot ~= "INVTYPE_BAG" and
-		itemEquipSlot ~= "INVTYPE_QUIVER" and not tContains(CollectedAppearances, id) then
+		itemEquipSlot ~= "INVTYPE_QUIVER" and not GetCollectedAppearanceSet()[id] then
 			self:AddLine("|cff" .. L["f194f7"] .. L["New Appearance"])
 		end
 	end)
@@ -694,6 +697,12 @@ local function OnEventEnterWorldReloadTransmogIDs(self, event, unit)
 		end
 		HookItemTooltip()
 		AddNewAppearanceToLocalList()
+
+		-- Sync the collection once per session so the "New Appearance" tooltip matches this account.
+		if not hasSyncedCollection then
+			hasSyncedCollection = true
+			AIO.Handle("TransmogrificationServer", "SendCollectedTransmogItemIDs", true)
+		end
 	elseif ( unit == "player" ) then
 		AIO.Handle("TransmogrificationServer", "OnUnequipItem")
 		UpdateAllSlotTextures()
@@ -707,9 +716,6 @@ end
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:SetScript("OnEvent", OnEvent)
-
--- Register event frame for the new appearance system message filter.
-ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", collectionMessageFilter)
 
 -- Define frame functions.
 function OnClickTransmogButton(self)
@@ -802,6 +808,117 @@ function OnClickApplyAllowTransmogrifications(btn)
 
 	-- Refresh the transmogrification preview with new information from the server.
 	LoadTransmogrificationsFromCurrentIDs(false)
+end
+
+-- Saved outfits: named sets of appearances stored per character. Loading an outfit only fills the preview;
+-- the player still clicks Transmogrify to apply it, so the server validates and charges as usual.
+local function GetOutfits()
+	if type(TransmogrificationOutfits) ~= "table" then
+		TransmogrificationOutfits = {}
+	end
+	return TransmogrificationOutfits
+end
+
+local function GetSortedOutfitNames()
+	local names = {}
+	for name in pairs(GetOutfits()) do
+		table.insert(names, name)
+	end
+	table.sort(names)
+	return names
+end
+
+local function SaveOutfit(name)
+	name = name and strtrim(name) or ""
+	if name == "" then
+		return
+	end
+
+	-- Save what the preview window currently shows; nil means the slot shows the equipped item.
+	local outfit = {}
+	for slotName, _ in pairs(equipmentSlotIDs) do
+		outfit[slotName] = previewTransmogrificationIDs[slotName]
+	end
+	GetOutfits()[name] = outfit
+	DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. string.format(L["Outfit \"%s\" saved."], name))
+end
+
+local function LoadOutfit(name)
+	local outfit = GetOutfits()[name]
+	if not outfit then
+		return
+	end
+
+	PlaySound("igMainMenuOptionCheckBoxOn", "sfx")
+	for slotName, slotID in pairs(equipmentSlotIDs) do
+		local equipSlot = GetEquipmentSlot(slotID)
+		if equipSlot and GetInventoryItemID("player", equipSlot) ~= nil then
+			previewTransmogrificationIDs[slotName] = outfit[slotName]
+		end
+	end
+
+	LoadTransmogrificationsFromCurrentIDs(true)
+	DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. string.format(L["Outfit \"%s\" loaded into the preview. Click Transmogrify to apply it."], name))
+end
+
+local function DeleteOutfit(name)
+	GetOutfits()[name] = nil
+	DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. string.format(L["Outfit \"%s\" deleted."], name))
+end
+
+StaticPopupDialogs["TRANSMOG_SAVE_OUTFIT"] = {
+	text = L["Enter a name for this outfit:"],
+	button1 = ACCEPT,
+	button2 = CANCEL,
+	hasEditBox = 1,
+	maxLetters = 32,
+	OnShow = function(self)
+		_G[self:GetName().."EditBox"]:SetFocus()
+	end,
+	OnAccept = function(self)
+		SaveOutfit(_G[self:GetName().."EditBox"]:GetText())
+	end,
+	EditBoxOnEnterPressed = function(self)
+		SaveOutfit(self:GetText())
+		self:GetParent():Hide()
+	end,
+	EditBoxOnEscapePressed = function(self)
+		self:GetParent():Hide()
+	end,
+	timeout = 0,
+	whileDead = true,
+	hideOnEscape = true,
+	preferredIndex = 3,
+}
+
+local outfitMenuFrame = nil
+
+function OnClickOutfitsButton(btn)
+	if not outfitMenuFrame then
+		outfitMenuFrame = CreateFrame("Frame", "TransmogOutfitMenu", UIParent, "UIDropDownMenuTemplate")
+	end
+
+	local names = GetSortedOutfitNames()
+	local menu = {
+		{ text = L["Outfits"], isTitle = true, notCheckable = true },
+	}
+
+	if #names == 0 then
+		table.insert(menu, { text = L["No saved outfits"], disabled = true, notCheckable = true })
+	end
+	for _, name in ipairs(names) do
+		table.insert(menu, { text = name, notCheckable = true, func = function() LoadOutfit(name) end })
+	end
+	table.insert(menu, { text = L["Save current preview..."], notCheckable = true, func = function() StaticPopup_Show("TRANSMOG_SAVE_OUTFIT") end })
+
+	if #names > 0 then
+		table.insert(menu, { text = L["Delete"], isTitle = true, notCheckable = true })
+		for _, name in ipairs(names) do
+			table.insert(menu, { text = name, notCheckable = true, func = function() DeleteOutfit(name) end })
+		end
+	end
+
+	EasyMenu(menu, outfitMenuFrame, btn, 0, 0, "MENU")
 end
 
 function OnClickHideCurrentTransmogSlot(btn)
@@ -1423,6 +1540,13 @@ function OnTransmogrificationFrameLoad(self)
 	TransmogrificationFrame:SetScript("OnEvent", OnEventEnterWorldReloadTransmogIDs)
 
 	SetItemButtonTexture(_G["SaveButton"], "Interface\\AddOns\\Transmogrification\\assets\\Transmog-Icon")
+
+	-- Create the saved outfits button next to the Transmogrify button.
+	local outfitsButton = CreateFrame("Button", "TransmogOutfitsButton", TransmogrificationFrame, "UIPanelButtonTemplate")
+	outfitsButton:SetSize(80, 22)
+	outfitsButton:SetPoint("RIGHT", SaveButton, "LEFT", -12, 0)
+	outfitsButton:SetText(L["Outfits"])
+	outfitsButton:SetScript("OnClick", OnClickOutfitsButton)
 
 	TransmogModelMouseRotation(TransmogrificationModelFrame)
 

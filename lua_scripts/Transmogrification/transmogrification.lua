@@ -58,10 +58,72 @@
 -- ║ class fantasy intact.                                                  ║
 -- ╟────────────────────────────────────────────────────────────────────────╢
       local RESTRICT_WEAPON_TRANSMOG_TO_SIMILAR_WEAPONS = true            --║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+-- ║                                                                        ║
+-- ║ Cost in copper to apply a transmog appearance to one slot. Hiding and  ║
+-- ║ restoring appearances is always free. 10000 copper = 1 gold.           ║
+-- ║                                                                        ║
+-- ║ Set to 0 to make transmogrification free.                              ║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+      local TRANSMOG_COST_COPPER = 0                                      --║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+-- ║                                                                        ║
+-- ║ Item IDs that can never be collected or used as a transmog appearance, ║
+-- ║ e.g. GM or test items. Example: { [19019] = true, [17182] = true }     ║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+      local BLOCKED_TRANSMOG_ITEMS = {}                                   --║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+-- ║                                                                        ║
+-- ║ Item qualities that can never be collected or used as a transmog       ║
+-- ║ appearance. 0 = Poor, 1 = Common, 2 = Uncommon, 3 = Rare, 4 = Epic,    ║
+-- ║ 5 = Legendary, 6 = Artifact, 7 = Heirloom. Example: { [0] = true }     ║
+-- ║                                                                        ║
+-- ║ Already collected appearances stay listed but can no longer be applied.║
+-- ╟────────────────────────────────────────────────────────────────────────╢
+      local BLOCKED_TRANSMOG_QUALITIES = {}                               --║
 -- ╚════════════════════════════════════════════════════════════════════════╝
 
 local AIO = AIO or require("AIO")
 local TransmogrificationHandler = AIO.AddHandlers("TransmogrificationServer", {})
+
+-- Per-player limits on how often each client request is handled: at most `count` calls per `window` ms.
+-- EquipTransmogItem is sent once per changed slot when pressing Apply, so it allows bursts.
+local REQUEST_LIMITS = {
+	LoadPlayer = { count = 5, window = 1000 },
+	SetTransmogItemIDs = { count = 5, window = 1000 },
+	EquipTransmogItem = { count = 30, window = 1000 },
+	SetCurrentSlotItemIDs = { count = 10, window = 1000 },
+	SetSearchCurrentSlotItemIDs = { count = 10, window = 1000 },
+	GetItemsWithSameAppearance = { count = 20, window = 1000 },
+	SendCollectedTransmogItemIDs = { count = 1, window = 10000 },
+}
+local requestCounts = {}
+
+local function IsRateLimited(player, request)
+	local limit = REQUEST_LIMITS[request]
+	local guid = player:GetGUIDLow()
+	local now = GetCurrTime()
+	
+	local counts = requestCounts[guid]
+	if not counts then
+		counts = {}
+		requestCounts[guid] = counts
+	end
+	
+	local entry = counts[request]
+	-- Start a new window when the old one has passed (or the millisecond timer wrapped around).
+	if not entry or now < entry.start or now - entry.start >= limit.window then
+		counts[request] = { start = now, count = 1 }
+		return false
+	end
+	
+	entry.count = entry.count + 1
+	return entry.count > limit.count
+end
+
+-- Equipment change refreshes are coalesced: one refresh runs shortly after a burst of changes.
+local REFRESH_DELAY = 100
+local pendingRefreshes = {}
 
 local SLOTS = 6
 local CALC = 281
@@ -86,8 +148,16 @@ local localeMessages = {
 	LOOT_ITEM_LOCALE = {
 		[0] = " has been added to your appearance collection.", -- enUS/enGB
 		[3] = " wurde deiner Transmog-Sammlung hinzugefügt.", -- deDE
+	},
+	NOT_ENOUGH_MONEY = {
+		[0] = "You do not have enough money to transmogrify this item.", -- enUS/enGB
+		[3] = "Du hast nicht genug Geld, um diesen Gegenstand zu transmogrifizieren.", -- deDE
 	}
 }
+
+local function IsAppearanceBlocked(itemTemplate)
+	return BLOCKED_TRANSMOG_ITEMS[itemTemplate:GetItemId()] or BLOCKED_TRANSMOG_QUALITIES[itemTemplate:GetQuality()] or false
+end
 
 local function GetLocalizedMessage(messageID, locale, ...)
 	 local message = localeMessages[messageID][locale] or localeMessages[messageID][0]
@@ -95,15 +165,6 @@ local function GetLocalizedMessage(messageID, locale, ...)
 		  return string.format(message, ...)
 	 end
 	 return message
-end
-
-function Transmog_CalculateSlot(slot)
-	if (slot == 0) then
-		slot = 1
-	elseif (slot >= 2) then
-		slot = slot + 1
-	end
-	return CALC + (slot * 2);
 end
 
 function Transmog_CalculateSlotReverse(slot)
@@ -156,6 +217,10 @@ local function LootItemLocale(player, item, count, locale)
 	else
 		itemTemplate = item:GetItemTemplate()
 		itemID = itemTemplate:GetItemId()
+	end
+	
+	if not itemTemplate or IsAppearanceBlocked(itemTemplate) then
+		return
 	end
 	
 	local inventoryType = itemTemplate:GetInventoryType()
@@ -358,6 +423,14 @@ function GetTransmogQueryConditions(accountGUID, slot, equippedItem)
 	
 	local queryConditions = "account_id = " .. accountGUID .. " AND inventory_type " .. inventoryTypes
 	
+	local blockedItemIDs = {}
+	for itemID in pairs(BLOCKED_TRANSMOG_ITEMS) do
+		table.insert(blockedItemIDs, tonumber(itemID))
+	end
+	if #blockedItemIDs > 0 then
+		queryConditions = queryConditions .. " AND unlocked_item_id NOT IN (" .. table.concat(blockedItemIDs, ", ") .. ")"
+	end
+	
 	if equippedItemSubType then
 		if (RESTRICT_ARMOR_TRANSMOG_TO_SIMILAR_MATERIALS and equippedItemType == 4) then
 			queryConditions = queryConditions .. " AND inventory_subtype = " .. equippedItemSubType
@@ -371,6 +444,11 @@ end
 
 -- Returns true if the account has collected the item and it is a valid appearance for the equipped item.
 function CanApplyTransmog(player, slot, equippedItem, itemID)
+	local itemTemplate = GetItemTemplate(itemID)
+	if not itemTemplate or IsAppearanceBlocked(itemTemplate) then
+		return false
+	end
+	
 	local queryConditions = GetTransmogQueryConditions(player:GetAccountId(), slot, equippedItem)
 	if not queryConditions then
 		return false
@@ -380,8 +458,7 @@ function CanApplyTransmog(player, slot, equippedItem, itemID)
 	return result ~= nil
 end
 
--- TODO: add lua/c++ function for unequip!!
-function TransmogrificationHandler.OnUnequipItem(player)
+local function RefreshEquippedTransmogs(player)
 	local playerGUID = player:GetGUIDLow()
 	
 	-- Clear transmogs from slots that no longer have an item equipped.
@@ -407,6 +484,23 @@ function TransmogrificationHandler.OnUnequipItem(player)
 	Transmog_Load(player)
 end
 
+-- Sent by the client whenever its equipment or model changes.
+function TransmogrificationHandler.OnUnequipItem(player)
+	local guid = player:GetGUIDLow()
+	local now = GetCurrTime()
+	local pending = pendingRefreshes[guid]
+	-- A refresh is already queued (stale entries are ignored in case the timed event was dropped).
+	if pending and now >= pending and now - pending < 1000 then
+		return
+	end
+	
+	pendingRefreshes[guid] = now
+	player:RegisterEvent(function(eventId, delay, repeats, refreshPlayer)
+		pendingRefreshes[guid] = nil
+		RefreshEquippedTransmogs(refreshPlayer)
+	end, REFRESH_DELAY, 1)
+end
+
 function Transmog_Load(player)
 	local playerGUID = player:GetGUIDLow()
 	
@@ -426,16 +520,17 @@ function Transmog_Load(player)
 	end
 end
 
-function Transmog_OnLogin(event, player)
-	-- Apply transmog on login
-	-- Transmog_Load(player)
-	--local item = player:GetEquippedItemBySlot(4)
-	--print(item:GetName())
-end
-
 function TransmogrificationHandler.LoadPlayer(player)
 	Transmog_Load(player)
+	AIO.Handle(player, "TransmogrificationServer", "SetTransmogCost", TRANSMOG_COST_COPPER)
 	player:SetUInt32Value(147, 1) -- use unit padding
+end
+
+-- Sends the stored transmog of one slot to the client, e.g. to undo a change the server rejected.
+local function SendSlotTransmog(player, slot)
+	local transmog = CharDBQuery("SELECT item, real_item FROM character_transmog WHERE player_guid = "..player:GetGUIDLow().." AND slot = "..slot..";")
+	local row = transmog and transmog:GetRow() or {}
+	AIO.Handle(player, "TransmogrificationServer", "SetTransmogItemIDClient", slot, row["item"], row["real_item"])
 end
 
 function TransmogrificationHandler.EquipTransmogItem(player, item, slot)
@@ -448,12 +543,24 @@ function TransmogrificationHandler.EquipTransmogItem(player, item, slot)
 	end
 	local equippedItem = player:GetEquippedItemBySlot(GetEquipmentSlot(slot))
 	if not equippedItem then
+		SendSlotTransmog(player, slot)
 		return
 	end
 	if item ~= nil and item ~= 0 then
 		item = ToPositiveInteger(item)
 		if not item or not CanApplyTransmog(player, slot, equippedItem, item) then
+			SendSlotTransmog(player, slot)
 			return
+		end
+		
+		-- Applying an appearance costs money; hiding and restoring are free.
+		if TRANSMOG_COST_COPPER > 0 then
+			if player:GetCoinage() < TRANSMOG_COST_COPPER then
+				player:SendBroadcastMessage(GetLocalizedMessage("NOT_ENOUGH_MONEY", player:GetDbLocaleIndex()))
+				SendSlotTransmog(player, slot)
+				return
+			end
+			player:ModifyMoney(-TRANSMOG_COST_COPPER)
 		end
 	end
 	
@@ -462,52 +569,6 @@ function TransmogrificationHandler.EquipTransmogItem(player, item, slot)
 	local itemValue = (item == nil) and "NULL" or item
 	CharDBQuery("INSERT INTO character_transmog (`player_guid`, `slot`, `item`, `real_item`) VALUES ("..playerGUID..", '"..slot.."', "..itemValue..", "..realItemID..") ON DUPLICATE KEY UPDATE item = VALUES(item), real_item = VALUES(real_item);")
 	player:SetUInt32Value(slot, item or realItemID)
-end
-
-function TransmogrificationHandler.UnequipTransmogItem(player, slot)
-	local playerGUID = player:GetGUIDLow()
-	
-	slot = ToTransmogSlot(slot)
-	if not slot then
-		return
-	end
-	
-	-- Get the corresponding equipment slot using our mapping function
-	local equipmentSlot = GetEquipmentSlot(slot)
-	
-	-- Check if there's an actual item equipped in this slot
-	local currentItem = player:GetEquippedItemBySlot(equipmentSlot)
-	
-	-- If no item is currently equipped, we should set the visual to 0
-	if not currentItem then
-		CharDBQuery("UPDATE character_transmog SET item = NULL, real_item = NULL WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
-		player:SetUInt32Value(tonumber(slot), 0)
-		return
-	end
-	
-	-- Otherwise, handle normally but ensure we're setting to the real item or 0
-	local oldItem = CharDBQuery("SELECT real_item FROM character_transmog WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
-	
-	-- If no record or null real_item, set to the actual item's appearance
-	if not oldItem or not oldItem:GetUInt32(0) or oldItem:GetUInt32(0) == 0 then
-		-- Here we set item to NULL (not 0) to indicate no transmog is applied
-		CharDBQuery("UPDATE character_transmog SET item = NULL WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
-		
-		-- Get the current equipped item's ID to display
-		local realItemID = currentItem:GetItemTemplate():GetItemId()
-		player:SetUInt32Value(tonumber(slot), realItemID)
-		return
-	end
-	
-	-- If we have a real_item value, restore that appearance
-	local oldItemID = oldItem:GetUInt32(0)
-	CharDBQuery("UPDATE character_transmog SET item = NULL WHERE player_guid = "..playerGUID.." AND slot = "..slot..";")
-	player:SetUInt32Value(tonumber(slot), oldItemID)
-end
-
-function TransmogrificationHandler.displayTransmog(player, spellid)
-	AIO.Handle(player, "TransmogrificationServer", "TransmogrificationFrame")
-	return false
 end
 
 function TransmogrificationHandler.SetTransmogItemIDs(player)
@@ -602,24 +663,6 @@ function TransmogrificationHandler.SetSearchCurrentSlotItemIDs(player, slot, pag
 	SendSlotItemIDs(player, slot, page, search)
 end
 
-function TransmogrificationHandler.SetEquipmentTransmogInfo(player, slot, currentSlotTooltip)
-	local playerGUID = player:GetGUIDLow()
-	
-	slot = ToTransmogSlot(slot)
-	if not slot then
-		return
-	end
-	
-	local transmog = CharDBQuery("SELECT COUNT(item) FROM character_transmog WHERE player_guid = "..playerGUID.." AND slot = '"..slot.."';")
-	if (transmog == nil) then
-		return;
-	end
-	
-	if (transmog:GetUInt32(0) ~= 0) then
-		AIO.Handle(player, "TransmogrificationServer", "SetEquipmentTransmogInfoClient", currentSlotTooltip)
-	end
-end
-
 function TransmogrificationHandler.GetItemsWithSameAppearance(player, itemID)
 	itemID = ToPositiveInteger(itemID)
 	if not itemID then
@@ -657,7 +700,9 @@ function TransmogrificationHandler.GetItemsWithSameAppearance(player, itemID)
 	AIO.Handle(player, "TransmogrificationServer", "ReceiveMatchingAppearances", itemID, matchingItems)
 end
 
-function TransmogrificationHandler.SendCollectedTransmogItemIDs(player)
+-- `silent` is set by the client's automatic sync on login; /transmog sync shows the result in chat.
+function TransmogrificationHandler.SendCollectedTransmogItemIDs(player, silent)
+	silent = (silent == true)
 	local accountGUID = player:GetAccountId()
 	
 	-- Query to retrieve collected transmog display IDs
@@ -665,7 +710,7 @@ function TransmogrificationHandler.SendCollectedTransmogItemIDs(player)
 	local displayIDsResult = AuthDBQuery(collectedDisplayIDsQuery)
 	
 	if not displayIDsResult then
-		AIO.Handle(player, "TransmogrificationServer", "ReceiveCollectedAppearances", {}, 0)
+		AIO.Handle(player, "TransmogrificationServer", "ReceiveCollectedAppearances", {}, 0, silent)
 		return
 	end
 	
@@ -697,20 +742,32 @@ function TransmogrificationHandler.SendCollectedTransmogItemIDs(player)
 	end
 	
 	-- Send the collected transmogs to the client
-	AIO.Handle(player, "TransmogrificationServer", "ReceiveCollectedAppearances", collectedAppearances, uniqueAppearancesCount)
+	AIO.Handle(player, "TransmogrificationServer", "ReceiveCollectedAppearances", collectedAppearances, uniqueAppearancesCount, silent)
+end
+
+-- Apply the request limits to every limited handler.
+for request in pairs(REQUEST_LIMITS) do
+	local handler = TransmogrificationHandler[request]
+	TransmogrificationHandler[request] = function(player, ...)
+		if IsRateLimited(player, request) then
+			return
+		end
+		return handler(player, ...)
+	end
+end
+
+function Transmog_OnLogout(event, player)
+	local guid = player:GetGUIDLow()
+	requestCounts[guid] = nil
+	pendingRefreshes[guid] = nil
 end
 
 RegisterPlayerEvent(1, Transmog_OnCharacterCreate)
 RegisterPlayerEvent(2, Transmog_OnCharacterDelete)
 RegisterPlayerEvent(3, Transmog_OnCharacterLogin)
+RegisterPlayerEvent(4, Transmog_OnLogout)
 
 RegisterPlayerEvent(29, Transmog_OnEquipItem)
-
-RegisterPlayerEvent(30, function(event, player, bag, slot) 
-    if bag == 255 then
-        TransmogrificationHandler.OnUnequipItem(player)
-    end
-end)
 
 if ADD_NEWLY_LOOTED_ITEMS_TO_THE_TRANSMOG_LIST then
 	RegisterPlayerEvent(32, Transmog_OnLootItem)

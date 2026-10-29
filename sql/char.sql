@@ -16,12 +16,11 @@
 
 -- Exportiere Struktur von Tabelle acore_characters.character_transmog
 CREATE TABLE IF NOT EXISTS `character_transmog` (
-  `player_guid` int unsigned DEFAULT NULL,
+  `player_guid` int unsigned NOT NULL,
   `slot` varchar(3) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `item` int unsigned DEFAULT NULL,
   `real_item` int unsigned DEFAULT NULL,
-  UNIQUE KEY `player_and_slot` (`player_guid`,`slot`) USING BTREE,
-  KEY `player_and_slot_key` (`player_guid`,`slot`)
+  PRIMARY KEY (`player_guid`,`slot`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- Daten-Export vom Benutzer nicht ausgewählt

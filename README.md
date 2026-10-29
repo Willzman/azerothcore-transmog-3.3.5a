@@ -16,13 +16,44 @@ This project brings a fully functional Transmog system to AzerothCore servers, c
 
 📚 For more help, check out the [mod-eluna documentation](https://github.com/azerothcore/mod-eluna).
 
+### Upgrading from 2.5.x
+
+1. Replace the server script and the client AddOn with the new versions. **Both must be updated** — 2.6.0 changes messages between client and server.
+2. Run `sql/updates/2.6.0_auth.sql` against your auth database and `sql/updates/2.6.0_char.sql` against your characters database (once).
+3. Optional: transmogs that were wrongly saved as hidden by earlier versions can be reset with `UPDATE character_transmog SET item = NULL WHERE item = 0;` (this also un-hides slots players hid on purpose).
+
+## ⚙️ Configuration
+
+All options are at the top of `lua_scripts/Transmogrification/transmogrification.lua`:
+
+- Which items are added to the collection (equipped, looted, quest rewards).
+- Armor material and weapon type restrictions.
+- `TRANSMOG_COST_COPPER` — cost to apply an appearance to one slot (hiding and restoring are free).
+- `BLOCKED_TRANSMOG_ITEMS` / `BLOCKED_TRANSMOG_QUALITIES` — items or qualities that can never be used as appearances.
+
 ## 📥 Installation (Client)
 
 1. Ensure you have both the [AIO](https://github.com/Rochet2/AIO) and [Transmogrify](https://github.com/DanieltheDeveloper/azerothcore-transmog-3.3.5a/tree/master/patches/lose%20files/Interface/addons) client-side AddOns installed to the AddOns folder of your World of Warcraft installation.
 
+## ✨ Features
+
+- Account-wide appearance collection, synced automatically on login (`/transmog sync` to sync manually).
+- Hide or restore any slot, with a live preview before applying.
+- Saved outfits: use the **Outfits** button in the Transmogrify window to save the current preview, load it back later, or delete it. Outfits are stored per character on the client.
+
+## 📝 Changelog
+
+### 2.6.0
+
+- **Security:** all client requests are now validated and rate limited. Earlier versions allowed SQL injection, editing arbitrary character fields, and applying or unlocking appearances the player did not own. Server owners should update.
+- Fixed transmogs reverting to the original or an old appearance after teleports and UI reloads.
+- Fixed armor material restrictions for legs, feet and wrists, and off-hand shields/holdables being offered weapon appearances.
+- Transmogs carry over when swapping gear if the appearance is still valid for the new item.
+- Added transmog cost, item/quality blocklists, saved outfits and automatic collection sync.
+- Faster appearance lists and collection sync (new database indexes, fewer queries).
+
 ## 🚧 Work in Progress (WIP)
 
-- Preventing event spam (click handling)
 - Search by display ID
 - Weapon aura support
 - Spells and character visual effects

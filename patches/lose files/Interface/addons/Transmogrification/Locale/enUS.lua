@@ -8,6 +8,15 @@ L["No item equipped in this slot."] = true
 L["Page %s"] = true
 L["Show Cloak"] = true
 L["Show Helm"] = true
+L["Cost: %s"] = true
+L["Outfits"] = true
+L["No saved outfits"] = true
+L["Save current preview..."] = true
+L["Delete"] = true
+L["Enter a name for this outfit:"] = true
+L["Outfit \"%s\" saved."] = true
+L["Outfit \"%s\" loaded into the preview. Click Transmogrify to apply it."] = true
+L["Outfit \"%s\" deleted."] = true
 L["You must have an item equipped in this slot to hide its appearance."] = true
 L["You must have an item equipped in this slot to restore its appearance."] = true
 
