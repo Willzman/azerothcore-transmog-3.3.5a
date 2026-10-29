@@ -51,6 +51,13 @@ function GetTransmogrificationOptions()
 				get = function() return Transmogrification:GetSettings().windowLock end,
 				set = function(_, value) Transmogrification:UpdateSetting("windowLock", value) end,
 			},
+			resetCharacterTab = {
+				name = L["Reset Character Window Button"],
+				desc = "|cffffd200" .. L["Moves the Transmogrify button on the Character window back to its default position. Shift-drag the button to move it."],
+				order = 4.5,
+				type = "execute",
+				func = function() ResetCharacterTransmogTabPosition() end,
+			},
 			spacer1 = {
 				name = " ",
 				desc = " ",

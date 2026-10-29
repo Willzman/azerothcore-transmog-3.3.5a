@@ -544,7 +544,51 @@ end
 function TransmogrifyToolTip(btn)
 	GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
 	GameTooltip:AddLine("|cffffffff" .. L["Transmogrify"])
+	GameTooltip:AddLine("|cff808080" .. L["Shift-drag to move."])
 	GameTooltip:Show()
+end
+
+-- Places the Character window button at its saved position (relative to the Character window's top left), or its default spot.
+function ApplyCharacterTransmogTabPosition()
+	if not characterTransmogTab then return end
+
+	local position = Transmogrification and Transmogrification.db and Transmogrification.db.global.characterTabPosition
+	characterTransmogTab:ClearAllPoints()
+	if position then
+		characterTransmogTab:SetPoint("TOPLEFT", CharacterFrame, "TOPLEFT", position.x, position.y)
+	else
+		characterTransmogTab:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", 0, -48)
+	end
+end
+
+function ResetCharacterTransmogTabPosition()
+	if Transmogrification and Transmogrification.db then
+		Transmogrification.db.global.characterTabPosition = nil
+	end
+	ApplyCharacterTransmogTabPosition()
+end
+
+local function OnCharacterTransmogTabDragStart(self)
+	if IsShiftKeyDown() then
+		self.isMoving = true
+		self:StartMoving()
+	end
+end
+
+local function OnCharacterTransmogTabDragStop(self)
+	if not self.isMoving then return end
+	self.isMoving = nil
+	self:StopMovingOrSizing()
+	self:SetUserPlaced(false)
+
+	-- Save the position relative to the Character window so the button keeps following it.
+	if Transmogrification and Transmogrification.db then
+		Transmogrification.db.global.characterTabPosition = {
+			x = self:GetLeft() - CharacterFrame:GetLeft(),
+			y = self:GetTop() - CharacterFrame:GetTop(),
+		}
+	end
+	ApplyCharacterTransmogTabPosition()
 end
 
 function RestoreItemToolTip(btn)
@@ -1512,6 +1556,11 @@ function OnTransmogrificationFrameLoad(self)
 	characterTransmogTab = CreateFrame("CheckButton", "CharacterFrameTab6", CharacterFrame, "SpellBookSkillLineTabTemplate")
 	characterTransmogTab:SetSize(32, 32);
 	characterTransmogTab:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", 0, -48)
+	characterTransmogTab:SetMovable(true)
+	characterTransmogTab:SetClampedToScreen(true)
+	characterTransmogTab:RegisterForDrag("LeftButton")
+	characterTransmogTab:SetScript("OnDragStart", OnCharacterTransmogTabDragStart)
+	characterTransmogTab:SetScript("OnDragStop", OnCharacterTransmogTabDragStop)
 	characterTransmogTab:Show()
 	innerCharacterTransmogTab = characterTransmogTab:CreateTexture("Item", "ARTWORK")
 	innerCharacterTransmogTab:SetTexture("Interface\\AddOns\\Transmogrification\\assets\\Transmog-Icon")

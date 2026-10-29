@@ -96,6 +96,11 @@ function Transmogrification:OnEnable()
 	
 	-- Apply custom Transmogrification window styling.
 	self:ApplyWindowSettings()
+	
+	-- Move the Character window button to its saved position.
+	if ApplyCharacterTransmogTabPosition then
+		ApplyCharacterTransmogTabPosition()
+	end
 end
 
 function Transmogrification:HandleSlashCommand(input)
@@ -107,6 +112,9 @@ function Transmogrification:HandleSlashCommand(input)
 		DEFAULT_CHAT_FRAME:AddMessage("|cffffff00" .. L["Querying the server for collected transmogrification appearances..."] .. "\n")
 		ChatFrame1EditBox:SetText(".transmog sync")
 		ChatEdit_SendText(ChatFrame1EditBox, 1)
+	-- Move the Character window button back to its default position.
+	elseif input:trim() == "resetbutton" then
+		ResetCharacterTransmogTabPosition()
 	else
 		if TransmogrificationFrame and TransmogrificationFrame:IsShown() then
 			TransmogrificationFrame:Hide()

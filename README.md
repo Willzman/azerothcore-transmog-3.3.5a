@@ -39,9 +39,14 @@ All options are at the top of `lua_scripts/Transmogrification/transmogrification
 
 - Account-wide appearance collection, synced automatically on login (`/transmog sync` to sync manually).
 - Hide or restore any slot, with a live preview before applying.
+- The Transmogrify button on the Character window can be moved with **Shift-drag** (reset it in the AddOn options or with `/transmog resetbutton`).
 - Saved outfits: use the **Outfits** button in the Transmogrify window to save the current preview, load it back later, or delete it. Outfits are stored per character on the client.
 
 ## 📝 Changelog
+
+### 2.6.1
+
+- The Transmogrify button on the Character window can now be moved (Shift-drag), so it no longer clashes with UI addons.
 
 ### 2.6.0
 
