@@ -94,10 +94,6 @@ All options are at the top of `lua_scripts/Transmogrification/transmogrification
 - Added item/quality blocklists, saved outfits and automatic collection sync.
 - Faster appearance lists and collection sync (new database indexes, fewer queries).
 
-## 🚧 Work in Progress (WIP)
-
-- Spells and character visual effects
-
 ## 🖼️ Screenshots
 
 ![Transmog Preview 1](./Screenshot.png)  
