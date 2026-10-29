@@ -107,13 +107,10 @@ local isTooltipHooked = false
 local CurrentItemSlot = PLAYER_VISIBLE_ITEM_1_ENTRYID
 local currentPage = 1
 local currentSlotTooltip = nil
-originalTransmogrificationIDs = originalTransmogrificationIDs or {}
+-- Transmogrification state is always synced from the server on PLAYER_ENTERING_WORLD, never restored from SavedVariables.
+originalTransmogrificationIDs = {}
 previewTransmogrificationIDs = {}
 currentTransmogrificationIDs = {}
-
-for k, v in pairs(originalTransmogrificationIDs) do
-	currentTransmogrificationIDs[k] = v
-end
 
 -- Cache global functions for performance.
 local GetItemIcon, SetItemButtonTexture, PlaySound, CreateFrame, GameTooltip = GetItemIcon, SetItemButtonTexture, PlaySound, CreateFrame, GameTooltip
@@ -304,20 +301,15 @@ function TransmogrificationHandler.SetTransmogItemIDClient(player, slot, id, rea
 	-- Get the equipment slot name.
 	local part = transmogrificationEquipmentSlotMap[tonumber(slot)]
 	if part then
-		-- If the equipment slot name is found, initialize the applicable transmogrification tables.
-		local currentTransmogID = currentTransmogrificationIDs[part]
-		local originalTransmogID = originalTransmogrificationIDs[part]
+		-- The server is authoritative: nil means no transmogrification, 0 means hidden.
+		if (id ~= 0 and id == realItemID) then
+			id = nil
+		end
 
-		if (id ~= 0 and id ~= nil and (currentTransmogID == nil or currentTransmogID == 0) and realItemID ~= id) then
-			currentTransmogrificationIDs[part] = id
-			originalTransmogrificationIDs[part] = id
+		currentTransmogrificationIDs[part] = id
+		originalTransmogrificationIDs[part] = id
+		if (id ~= nil and id ~= 0) then
 			TransmogrificationModelFrame:TryOn(id)
-		elseif (currentTransmogID ~= nil and currentTransmogID ~= 0) then
-				TransmogrificationModelFrame:TryOn(currentTransmogID)
-		elseif (id ~= 0 and realItemID ~= 0 and realItemID ~= nil) then
-			currentTransmogrificationIDs[part] = realItemID
-			originalTransmogrificationIDs[part] = realItemID
-				TransmogrificationModelFrame:TryOn(realItemID)
 		end
 	end
 
@@ -688,9 +680,7 @@ local function OnEvent(self, event)
 	AIO.Handle("TransmogrificationServer", "LoadPlayer")
 end
 
-AIO.AddSavedVarChar("originalTransmogrificationIDs")
-
-local function OnEventEnterWorldReloadTransmogIDs(self, event)
+local function OnEventEnterWorldReloadTransmogIDs(self, event, unit)
 	if ( event == "PLAYER_ENTERING_WORLD") then
 		AIO.Handle("TransmogrificationServer", "SetTransmogItemIDs")
 		if CollectedAppearances == nil then
@@ -698,7 +688,7 @@ local function OnEventEnterWorldReloadTransmogIDs(self, event)
 		end
 		HookItemTooltip()
 		AddNewAppearanceToLocalList()
-	else
+	elseif ( unit == "player" ) then
 		AIO.Handle("TransmogrificationServer", "OnUnequipItem")
 		UpdateAllSlotTextures()
 		if ( TransmogrificationFrame:IsShown() ) then

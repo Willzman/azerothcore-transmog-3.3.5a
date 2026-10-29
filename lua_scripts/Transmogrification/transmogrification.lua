@@ -332,6 +332,10 @@ function TransmogrificationHandler.OnUnequipItem(player)
 			end
 		end
 	end
+	
+	-- Equipping an item makes the core reset that slot's visual to the real item, so reapply the
+	-- stored transmogs. Otherwise they only come back after the next teleport or UI reload.
+	Transmog_Load(player)
 end
 
 function Transmog_Load(player)
@@ -344,10 +348,10 @@ function Transmog_Load(player)
 	
 	for i = 1, transmogs:GetRowCount(), 1 do
 		local currentRow = transmogs:GetRow()
-		local slot = currentRow["slot"]
+		local slot = tonumber(currentRow["slot"])
 		local item = currentRow["item"]
-		if (item ~= nil and item ~= '') then
-			player:SetUInt32Value(tonumber(slot), item)
+		if (item ~= nil and item ~= '' and player:GetEquippedItemBySlot(GetEquipmentSlot(slot))) then
+			player:SetUInt32Value(slot, item)
 		end
 		transmogs:NextRow()
 	end
@@ -463,15 +467,8 @@ function TransmogrificationHandler.SetTransmogItemIDs(player)
 		local item = currentRow["item"]
 		local slot = currentRow["slot"]
 		local real_item = currentRow["real_item"]
-		local validSlotItem = player:GetUInt32Value(tonumber(slot))
-		if (validSlotItem == 0) then
-			CharDBQuery("INSERT INTO character_transmog (`player_guid`, `slot`, `item`, `real_item`) VALUES ("..playerGUID..", '"..slot.."', 0, "..real_item..") ON DUPLICATE KEY UPDATE item = VALUES(item), real_item = VALUES(real_item);")
-		end
-		if (not item or item == 0 and real_item ~= nil and real_item ~= 0 and (validSlotItem ~= 0 or not validSlotItem)) then
-			AIO.Handle(player, "TransmogrificationServer", "SetTransmogItemIDClient", slot, 0, real_item)
-		else
-			AIO.Handle(player, "TransmogrificationServer", "SetTransmogItemIDClient", slot, item, real_item)
-		end
+		-- The database is the source of truth: item NULL = no transmog, 0 = hidden, otherwise the transmog item.
+		AIO.Handle(player, "TransmogrificationServer", "SetTransmogItemIDClient", slot, item, real_item)
 		transmogs:NextRow()
 	end
 end
